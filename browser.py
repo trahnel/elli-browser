@@ -73,9 +73,13 @@ def layout(text):
   display_list = []
   cursor_x, cursor_y = HSTEP, VSTEP
   for c in text:
+    if c == "\n":
+      cursor_y += VSTEP
+      cursor_x = HSTEP
+
     display_list.append((cursor_x, cursor_y, c))
     cursor_x += HSTEP
-    
+
     if cursor_x >= WIDTH - HSTEP:
       cursor_y += VSTEP
       cursor_x = HSTEP
@@ -89,7 +93,6 @@ class Browser:
     self.canvas.pack()
 
     self.scroll = 0
-    self
     self.window.bind("<Up>", self.scrollup)
     self.window.bind("<Down>", self.scrolldown)
 
@@ -107,8 +110,9 @@ class Browser:
       self.canvas.create_text(x, y - self.scroll, text=c)
 
   def scrollup(self, e):
-    self.scroll -= SCROLL_STEP
-    self.draw()
+    if self.scroll > 0:
+      self.scroll -= SCROLL_STEP
+      self.draw()
   
   def scrolldown(self, e):
     self.scroll += SCROLL_STEP
