@@ -25,9 +25,8 @@ def request(url):
  
   s.connect((host, port))
 
-  s.send(b"GET /index.html HTTP/1.0\r\n" +
-        b"Host: quizicgame.com\r\n" +
-        b"\r\n")
+  data = "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n".format(host=host, path=path)
+  s.send(data.encode())
 
   response = s.makefile("r", encoding="utf8", newline="\r\n")
 
@@ -48,7 +47,8 @@ def request(url):
 
   return headers, body
 
-def show(body):
+def lex(body):
+  text = ""
   in_angle = False
   for c in body:
     if c == "<":
@@ -56,13 +56,60 @@ def show(body):
     elif c == ">":
       in_angle = False
     elif not in_angle:
-      print(c, end="")
+      text += c
+  return text;
 
-def load(url):
-  headers, body = request(url)
-  show(body)
+WIDTH, HEIGHT = 800, 600
+HSTEP, VSTEP = 13, 18
+SCROLL_STEP = 100
+
+def layout(text):
+  display_list = []
+  cursor_x, cursor_y = HSTEP, VSTEP
+  for c in text:
+    display_list.append((cursor_x, cursor_y, c))
+    cursor_x += HSTEP
+    
+    if cursor_x >= WIDTH - HSTEP:
+      cursor_y += VSTEP
+      cursor_x = HSTEP
+  return display_list;
+
+import tkinter
+class Browser:
+  def __init__(self):
+    self.window = tkinter.Tk()
+    self.canvas = tkinter.Canvas(self.window, width=WIDTH, height=HEIGHT)
+    self.canvas.pack()
+
+    self.scroll = 0
+    self
+    self.window.bind("<Up>", self.scrollup)
+    self.window.bind("<Down>", self.scrolldown)
+
+  def load(self, url):
+    headers, body = request(url)
+    text = lex(body)
+    self.display_list = layout(text)
+    self.draw()
+
+  def draw(self):
+    self.canvas.delete("all")
+    for x, y, c in self.display_list:
+      if y > self.scroll + HEIGHT: continue
+      if y + VSTEP < self.scroll: continue
+      self.canvas.create_text(x, y - self.scroll, text=c)
+
+  def scrollup(self, e):
+    self.scroll -= SCROLL_STEP
+    self.draw()
+  
+  def scrolldown(self, e):
+    self.scroll += SCROLL_STEP
+    self.draw()
 
 if __name__ == "__main__":
   import sys
   url = sys.argv[1]
-  load(url)
+  Browser().load(url)
+  tkinter.mainloop()
