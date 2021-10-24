@@ -50,12 +50,18 @@ def request(url):
 def lex(body):
   text = ""
   in_angle = False
-  for c in body:
+  in_body = False
+  for i in range(0, len(body)):
+    c = body[i]
     if c == "<":
       in_angle = True
+      if (body[i+1:i+5] == "body"):
+        in_body = True
+      if (body[i+1:i+6] == "/body"):
+        in_body = False
     elif c == ">":
       in_angle = False
-    elif not in_angle:
+    elif in_body and not in_angle:
       text += c
   return text;
 
