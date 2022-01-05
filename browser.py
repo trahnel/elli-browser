@@ -452,12 +452,14 @@ class Browser:
             self.draw()
 
     def scrolldown(self, e):
-        self.scroll += SCROLL_STEP
+        max_y = self.document.height - HEIGHT
+        self.scroll = min(self.scroll + SCROLL_STEP, max_y)
         self.draw()
 
     def mousewheel(self, e):
         if e.delta == -1:
-            self.scroll += SCROLL_STEP
+            max_y = self.document.height - HEIGHT
+            self.scroll = min(self.scroll + SCROLL_STEP, max_y)
             self.draw()
         elif e.delta == 1 and self.scroll > 0:
             self.scroll -= SCROLL_STEP
