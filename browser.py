@@ -57,6 +57,15 @@ def request(url):
 WIDTH, HEIGHT = 800, 600
 HSTEP, VSTEP = 13, 18
 SCROLL_STEP = 100
+FONTS = {}
+
+
+def get_font(size, weight, slant):
+    key = (size, weight, slant)
+    if key not in FONTS:
+        font = tkinter.font.Font(size=size, weight=weight, slant=slant)
+        FONTS[key] = font
+    return FONTS[key]
 
 
 class Text:
@@ -78,6 +87,12 @@ class Element:
 
     def __repr__(self):
         return repr("<" + self.tag + ">")
+
+
+def print_tree(node, indent=0):
+    print(" " * indent, node)
+    for child in node.children:
+        print_tree(child, indent + 2)
 
 
 class HTMLParser:
@@ -182,36 +197,93 @@ class HTMLParser:
         return self.unfinished.pop()
 
 
-def print_tree(node, indent=0):
-    print(" " * indent, node)
-    for child in node.children:
-        print_tree(child, indent + 2)
+BLOCK_ELEMENTS = [
+    "html", "body", "article", "section", "nav", "aside",
+    "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header",
+    "footer", "address", "p", "hr", "pre", "blockquote",
+    "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure",
+    "figcaption", "main", "div", "table", "form", "fieldset",
+    "legend", "details", "summary"
+]
 
 
-FONTS = {}
+def layout_mode(node):
+    if isinstance(node, Text):
+        return 'inline'
+    if node.children:
+        for child in node.children:
+            if isinstance(child, Text):
+                continue
+            if child.tag in BLOCK_ELEMENTS:
+                return 'block'
+        return 'inline'
+    return 'block'
 
 
-def get_font(size, weight, slant):
-    key = (size, weight, slant)
-    if key not in FONTS:
-        font = tkinter.font.Font(size=size, weight=weight, slant=slant)
-        FONTS[key] = font
-    return FONTS[key]
+class BlockLayout:
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.children = []
+        self.previous = previous
+
+    def layout(self):
+        previous = None
+        for child in self.node.children:
+            if layout_mode(child) == 'inline':
+                next_block = InlineLayout(child, self, previous)
+            else:
+                next_block = BlockLayout(child, self, previous)
+            self.children.append(next_block)
+            previous = next_block
+
+        self.width = self.parent.width
+        self.x = self.parent.x
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
+        for child in self.children:
+            child.layout()
+
+        self.height = sum([child.height for child in self.children])
+
+    def paint(self, display_list):
+        for child in self.children:
+            child.paint(display_list)
 
 
-class Layout:
-    def __init__(self, nodes):
-        self.line = []
+class InlineLayout:
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.children = []
+        self.previous = previous
+
+    def layout(self):
+        self.width = self.parent.width
+        self.x = self.parent.x
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
         self.display_list = []
-        self.cursor_x = HSTEP
-        self.cursor_y = VSTEP
+        self.cursor_x = self.x
+        self.cursor_y = self.y
 
         self.weight = "normal"
         self.style = "roman"
         self.size = 16
 
-        self.recurse(nodes)
+        self.line = []
+        self.recurse(self.node)
         self.flush()
+
+        self.height = self.cursor_y - self.y
 
     def recurse(self, tree):
         if isinstance(tree, Text):
@@ -274,11 +346,34 @@ class Layout:
             y = baseline - font.metrics("ascent")
             self.display_list.append((x, y, word, font))
 
-        self.cursor_x = HSTEP
+        self.cursor_x = self.x
         self.line = []
 
         max_descent = max([metric["descent"] for metric in metrics])
         self.cursor_y = baseline + 1.25 * max_descent
+
+    def paint(self, display_list):
+        display_list.extend(self.display_list)
+
+
+class DocumentLayout:
+    def __init__(self, node):
+        self.node = node
+        self.parent = None
+        self.children = []
+
+    def layout(self):
+        child = BlockLayout(self.node, self, None)
+        self.children.append(child)
+
+        self.width = WIDTH - 2*HSTEP
+        self.x = HSTEP
+        self.y = VSTEP
+        child.layout()
+        self.height = child.height + 2*VSTEP
+
+    def paint(self, display_list):
+        self.children[0].paint(display_list)
 
 
 class Browser:
@@ -297,8 +392,11 @@ class Browser:
     def load(self, url):
         headers, body = request(url)
         self.nodes = HTMLParser(body).parse()
-        print_tree(self.nodes)
-        self.display_list = Layout(self.nodes).display_list
+        # print_tree(self.nodes)
+        self.document = DocumentLayout(self.nodes)
+        self.document.layout()
+        self.display_list = []
+        self.document.paint(self.display_list)
         self.draw()
 
     def draw(self):
