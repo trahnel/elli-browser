@@ -353,7 +353,11 @@ class InlineLayout:
         self.cursor_y = baseline + 1.25 * max_descent
 
     def paint(self, display_list):
-        display_list.extend(self.display_list)
+        if isinstance(self.node, Element) and self.node.tag == 'pre':
+            x2, y2 = self.x + self.width, self.y + self.height
+            display_list.append(DrawRect(self.x, self.y, x2, y2, 'gray'))
+        for x, y, word, font in self.display_list:
+            display_list.append(DrawText(x, y, word, font))
 
 
 class DocumentLayout:
@@ -374,6 +378,40 @@ class DocumentLayout:
 
     def paint(self, display_list):
         self.children[0].paint(display_list)
+
+
+class DrawText:
+    def __init__(self, x1, y1, text, font):
+        self.top = y1
+        self.left = x1
+        self.text = text
+        self.font = font
+        self.bottom = y1 + font.metrics("linespace")
+
+    def execute(self, scroll, canvas):
+        canvas.create_text(
+            self.left, self.top-scroll,
+            text=self.text,
+            font=self.font,
+            anchor='nw'
+        )
+
+
+class DrawRect:
+    def __init__(self, x1, y1, x2, y2, color):
+        self.top = y1
+        self.left = x1
+        self.bottom = y2
+        self.right = x2
+        self.color = color
+
+    def execute(self, scroll, canvas):
+        canvas.create_rectangle(
+            self.left, self.top-scroll,
+            self.right, self.bottom-scroll,
+            width=0,
+            fill=self.color
+        )
 
 
 class Browser:
@@ -401,14 +439,12 @@ class Browser:
 
     def draw(self):
         self.canvas.delete("all")
-        for x, y, w, f in self.display_list:
-            if y > self.scroll + HEIGHT:
+        for cmd in self.display_list:
+            if cmd.top > self.scroll + HEIGHT:
                 continue
-            if y + VSTEP < self.scroll:
+            if cmd.bottom < self.scroll:
                 continue
-
-            self.canvas.create_text(
-                x, y - self.scroll, text=w, font=f, anchor='nw')
+            cmd.execute(self.scroll, self.canvas)
 
     def scrollup(self, e):
         if self.scroll > 0:
