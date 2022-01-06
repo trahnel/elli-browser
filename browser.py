@@ -223,18 +223,25 @@ def layout_mode(node):
 def style(node, rules):
     node.style = {}
 
+    # Selector styling
     for selector, body in rules:
         if not selector.matches(node):
             continue
         for prop, value in body.items():
             node.style[prop] = value
 
+    # Inline styling
     if isinstance(node, Element) and "style" in node.attributes:
         pairs = CSSParser(node.attributes["style"]).body()
         for prop, value in pairs.items():
             node.style[prop] = value
     for child in node.children:
         style(child, rules)
+
+
+def cascade_priority(rule):
+    selector, body = rule
+    return selector.priority
 
 
 class InlineLayout:
@@ -436,6 +443,30 @@ class DrawRect:
         )
 
 
+def resolve_url(url: str, current: str):
+    if "://" in url:
+        return url
+    elif url.startswith("/"):
+        scheme, hostpath = current.split("://", 1)
+        host, oldpath = hostpath.split("/", 1)
+        return scheme + "://" + host + url
+    else:
+        dir, _ = current.rsplit("/", 1)
+        while url.startswith("../"):
+            url = url[3:]
+            if dir.count("/") == 2:
+                continue
+            dir, _ = dir.rsplit("/", 1)
+        return dir + "/" + url
+
+
+def tree_to_list(tree, list):
+    list.append(tree)
+    for child in tree.children:
+        tree_to_list(child, list)
+    return list
+
+
 class CSSParser:
     def __init__(self, s: str):
         self.s = s
@@ -512,6 +543,7 @@ class CSSParser:
                 self.whitespace()
                 body = self.body()
                 self.literal("}")
+                self.whitespace()
                 rules.append((selector, body))
             except AssertionError:
                 why = self.ignore_until(["}"])
@@ -526,6 +558,7 @@ class CSSParser:
 class TagSelector:
     def __init__(self, tag):
         self.tag = tag
+        self.priority = 1
 
     def matches(self, node):
         return isinstance(node, Element) and self.tag == node.tag
@@ -535,6 +568,7 @@ class DescendantSelector:
     def __init__(self, ancestor, descendant):
         self.ancestor = ancestor
         self.descendant = descendant
+        self.priority = ancestor.priority + descendant.priority
 
     def matches(self, node):
         if not self.descendant.matches(node):
@@ -563,7 +597,7 @@ class Browser:
             self.default_style_sheet = CSSParser(f.read()).parse()
 
     def load(self, url):
-        # Requuest
+        # Request
         headers, body = request(url)
 
         # DOM tree
@@ -574,8 +608,24 @@ class Browser:
         self.document = DocumentLayout(self.nodes)
 
         # Styles
+
+        # - Browser default styles
         rules = self.default_style_sheet.copy()
-        style(self.nodes, rules)
+
+        # - Imported styles
+        links = [node.attributes["href"]
+                 for node in tree_to_list(self.nodes, [])
+                 if isinstance(node, Element)
+                 and node.tag == "link"
+                 and "href" in node.attributes
+                 and node.attributes.get("rel") == "stylesheet"]
+        for link in links:
+            try:
+                header, body = request(resolve_url(link, url))
+            except:
+                continue
+            rules.extend(CSSParser(body).parse())
+        style(self.nodes, sorted(rules, key=cascade_priority))
 
         # Create layout tree
         self.document.layout()
