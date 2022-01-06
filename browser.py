@@ -220,17 +220,78 @@ def layout_mode(node):
     return 'block'
 
 
+class TagSelector:
+    def __init__(self, tag):
+        self.tag = tag
+        self.priority = 1
+
+    def matches(self, node):
+        return isinstance(node, Element) and self.tag == node.tag
+
+
+class DescendantSelector:
+    def __init__(self, ancestor, descendant):
+        self.ancestor = ancestor
+        self.descendant = descendant
+        self.priority = ancestor.priority + descendant.priority
+
+    def matches(self, node):
+        if not self.descendant.matches(node):
+            return False
+        while node.parent:
+            if self.ancestor.matches(node.parent):
+                return True
+            node = node.parent
+        return False
+
+
+INHERITED_PROPERTIES = {
+    "font-size": "16px",
+    "font-style": "normal",
+    "font-weight": "normal",
+    "color": "black",
+}
+
+
+def compute_style(node, property, value):
+    if property == 'font-size':
+        if value.endswith("px"):
+            return value
+        elif value.endswith("%"):
+            if node.parent:
+                parent_font_size = node.parent.style["font-size"]
+            else:
+                parent_font_size = INHERITED_PROPERTIES["font-size"]
+            node_pct = float(value[:-1]) / 100
+            parent_px = float(parent_font_size[:-2])
+            return str(node_pct*parent_px) + "px"
+        else:
+            return None
+    else:
+        return value
+
+
 def style(node, rules):
     node.style = {}
 
-    # Selector styling
+    # Inherited styles
+    for prop, default_value in INHERITED_PROPERTIES.items():
+        if node.parent:
+            node.style[prop] = node.parent.style[prop]
+        else:
+            node.style[prop] = default_value
+
+    # Selector styles
     for selector, body in rules:
         if not selector.matches(node):
             continue
         for prop, value in body.items():
-            node.style[prop] = value
+            computed_value = compute_style(node, prop, value)
+            if not computed_value:
+                continue
+            node.style[prop] = computed_value
 
-    # Inline styling
+    # Inline styles
     if isinstance(node, Element) and "style" in node.attributes:
         pairs = CSSParser(node.attributes["style"]).body()
         for prop, value in pairs.items():
@@ -264,76 +325,49 @@ class InlineLayout:
         self.cursor_x = self.x
         self.cursor_y = self.y
 
-        self.weight = "normal"
-        self.style = "roman"
-        self.size = 16
-
         self.line = []
         self.recurse(self.node)
         self.flush()
 
         self.height = self.cursor_y - self.y
 
-    def recurse(self, tree):
-        if isinstance(tree, Text):
-            self.text(tree)
+    def recurse(self, node):
+        if isinstance(node, Text):
+            self.text(node)
 
-        elif isinstance(tree, Element):
-            self.open_tag(tree.tag)
-            for child in tree.children:
+        elif isinstance(node, Element):
+            if node.tag == 'br':
+                self.flush()
+            for child in node.children:
                 self.recurse(child)
-            self.close_tag(tree.tag)
 
-    def open_tag(self, tag):
-        if tag == "i":
-            self.style = "italic"
-        elif tag == "b":
-            self.weight = "bold"
-        elif tag == "small":
-            self.size -= 2
-        elif tag == "big":
-            self.size += 4
-        elif tag == 'br':
-            self.flush()
-        elif tag == 'p':
-            self.flush()
-            self.cursor_y += VSTEP
-
-    def close_tag(self, tag):
-        if tag == "i":
-            self.style = "roman"
-        elif tag == "b":
-            self.weight = "normal"
-        elif tag == "small":
-            self.size += 2
-        elif tag == "big":
-            self.size -= 4
-        elif tag == 'br':
-            self.flush()
-        elif tag == 'p':
-            self.flush()
-            self.cursor_y += VSTEP
-
-    def text(self, tok):
-        font = get_font(self.size, self.weight, self.style)
-        for word in tok.text.split():
+    def text(self, node):
+        color = node.style["color"]
+        weight = node.style["font-weight"]
+        style = node.style["font-style"]
+        if style == 'normal':
+            style = "roman"  # Translate CSS "normal" to Tk "roman"
+        # Translate CSS pixels to Tk points
+        size = (int(float(node.style["font-size"][:-2]) * .75))
+        font = get_font(size, weight, style)
+        for word in node.text.split():
             w = font.measure(word)
             if self.cursor_x + w >= WIDTH - HSTEP:
                 self.flush()
             self.line.append(
-                (self.cursor_x, word, font))
+                (self.cursor_x, word, font, color))
             self.cursor_x += w + font.measure(" ")
 
     def flush(self):
         if not self.line:
             return
-        metrics = [font.metrics() for x, word, font in self.line]
+        metrics = [font.metrics() for x, word, font, color in self.line]
         max_ascent = max([metric["ascent"] for metric in metrics])
         baseline = self.cursor_y + 1.25 * max_ascent
 
-        for x, word, font in self.line:
+        for x, word, font, color in self.line:
             y = baseline - font.metrics("ascent")
-            self.display_list.append((x, y, word, font))
+            self.display_list.append((x, y, word, font, color))
 
         self.cursor_x = self.x
         self.line = []
@@ -347,11 +381,8 @@ class InlineLayout:
             x2, y2 = self.x + self.width, self.y + self.height
             rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
             display_list.append(rect)
-        # if isinstance(self.node, Element) and self.node.tag == 'pre':
-        #     x2, y2 = self.x + self.width, self.y + self.height
-        # display_list.append(DrawRect(self.x, self.y, x2, y2, 'gray'))
-        for x, y, word, font in self.display_list:
-            display_list.append(DrawText(x, y, word, font))
+        for x, y, word, font, color in self.display_list:
+            display_list.append(DrawText(x, y, word, font, color))
 
 
 class BlockLayout:
@@ -410,18 +441,20 @@ class DocumentLayout:
 
 
 class DrawText:
-    def __init__(self, x1, y1, text, font):
+    def __init__(self, x1, y1, text, font, color):
         self.top = y1
         self.left = x1
         self.text = text
         self.font = font
         self.bottom = y1 + font.metrics("linespace")
+        self.color = color
 
-    def execute(self, scroll, canvas):
+    def execute(self, scroll: int, canvas: tkinter.Canvas):
         canvas.create_text(
             self.left, self.top-scroll,
             text=self.text,
             font=self.font,
+            fill=self.color,
             anchor='nw'
         )
 
@@ -434,7 +467,7 @@ class DrawRect:
         self.right = x2
         self.color = color
 
-    def execute(self, scroll, canvas):
+    def execute(self, scroll, canvas: tkinter.Canvas):
         canvas.create_rectangle(
             self.left, self.top-scroll,
             self.right, self.bottom-scroll,
@@ -555,35 +588,11 @@ class CSSParser:
         return rules
 
 
-class TagSelector:
-    def __init__(self, tag):
-        self.tag = tag
-        self.priority = 1
-
-    def matches(self, node):
-        return isinstance(node, Element) and self.tag == node.tag
-
-
-class DescendantSelector:
-    def __init__(self, ancestor, descendant):
-        self.ancestor = ancestor
-        self.descendant = descendant
-        self.priority = ancestor.priority + descendant.priority
-
-    def matches(self, node):
-        if not self.descendant.matches(node):
-            return False
-        while node.parent:
-            if self.ancestor.matches(node.parent):
-                return True
-            node = node.parent
-        return False
-
-
 class Browser:
     def __init__(self):
         self.window = tkinter.Tk()
-        self.canvas = tkinter.Canvas(self.window, width=WIDTH, height=HEIGHT)
+        self.canvas = tkinter.Canvas(
+            self.window, width=WIDTH, height=HEIGHT, bg="white")
         self.canvas.pack()
 
         self.scroll = 0
@@ -666,7 +675,7 @@ class Browser:
 
 if __name__ == "__main__":
     import sys
-    Browser().load('http://localhost:8000/')
+    # Browser().load('http://localhost:8000/')
     # Browser().load('https://www.zggdwx.com/xiyou/1.html')
-    # Browser().load(sys.argv[1])
+    Browser().load(sys.argv[1])
     tkinter.mainloop()
