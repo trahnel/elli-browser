@@ -596,9 +596,9 @@ class Browser:
         self.canvas.pack()
 
         self.scroll = 0
-        self.window.bind("<Up>", self.scrollup)
-        self.window.bind("<Down>", self.scrolldown)
-        self.window.bind("<MouseWheel>", self.mousewheel)
+        self.window.bind("<Up>", self.handlescrollup)
+        self.window.bind("<Down>", self.handlescrolldown)
+        self.window.bind("<MouseWheel>", self.handlemousewheel)
 
         self.display_list = []
 
@@ -653,24 +653,27 @@ class Browser:
                 continue
             cmd.execute(self.scroll, self.canvas)
 
-    def scrollup(self, e):
+    def scrollup(self):
         if self.scroll > 0:
-            self.scroll -= SCROLL_STEP
+            self.scroll = max(0, self.scroll - SCROLL_STEP)
             self.draw()
 
-    def scrolldown(self, e):
+    def scrolldown(self):
         max_y = self.document.height - HEIGHT
         self.scroll = min(self.scroll + SCROLL_STEP, max_y)
         self.draw()
 
-    def mousewheel(self, e):
+    def handlescrollup(self, e):
+        self.scrollup()
+
+    def handlescrolldown(self, e):
+        self.scrolldown()
+
+    def handlemousewheel(self, e):
         if e.delta == -1:
-            max_y = self.document.height - HEIGHT
-            self.scroll = min(self.scroll + SCROLL_STEP, max_y)
-            self.draw()
-        elif e.delta == 1 and self.scroll > 0:
-            self.scroll -= SCROLL_STEP
-            self.draw()
+            self.scrolldown()
+        elif e.delta == 1:
+            self.scrollup()
 
 
 if __name__ == "__main__":
