@@ -1,5 +1,6 @@
 import tkinter
 import tkinter.font
+from turtle import width
 
 
 def request(url):
@@ -314,7 +315,6 @@ class TextLayout:
         self.children = []
 
     def layout(self):
-        color = self.node.style["color"]
         weight = self.node.style["font-weight"]
         style = self.node.style["font-style"]
         if style == 'normal':
@@ -337,6 +337,10 @@ class TextLayout:
         display_list.append(
             DrawText(self.x, self.y, self.word, self.font, color))
 
+    def __repr__(self):
+        return "TextLayout(x={}, y={}, width={}, height={}, font={}, word={}".format(
+            self.x, self.y, self.width, self.height, self.font, self.word)
+
 
 class LineLayout:
     def __init__(self, node, parent, previous):
@@ -357,6 +361,10 @@ class LineLayout:
         for word in self.children:
             word.layout()
 
+        if not self.children:
+            self.height = 0
+            return
+
         max_ascent = max([word.font.metrics("ascent")
                          for word in self.children])
         baseline = self.y + 1.25 * max_ascent
@@ -369,6 +377,10 @@ class LineLayout:
     def paint(self, display_list):
         for child in self.children:
             child.paint(display_list)
+
+    def __repr__(self):
+        return "LineLayout(x={}, y={}, width={}, height={})".format(
+            self.x, self.y, self.width, self.height)
 
 
 class InlineLayout:
@@ -439,6 +451,10 @@ class InlineLayout:
         for child in self.children:
             child.paint(display_list)
 
+    def __repr__(self):
+        return "InlineLayout(x={}, y={}, width={}, height={})".format(
+            self.x, self.y, self.width, self.height)
+
 
 class BlockLayout:
     def __init__(self, node, parent, previous):
@@ -474,6 +490,10 @@ class BlockLayout:
         for child in self.children:
             child.paint(display_list)
 
+    def __repr__(self):
+        return "BlockLayout(x={}, y={}, width={}, height={})".format(
+            self.x, self.y, self.width, self.height)
+
 
 class DocumentLayout:
     def __init__(self, node):
@@ -493,6 +513,9 @@ class DocumentLayout:
 
     def paint(self, display_list):
         self.children[0].paint(display_list)
+
+    def __repr__(self) -> str:
+        return "DocumentLayout()"
 
 
 class DrawText:
@@ -643,24 +666,22 @@ class CSSParser:
         return rules
 
 
-class Browser:
-    def __init__(self):
-        self.window = tkinter.Tk()
-        self.canvas = tkinter.Canvas(
-            self.window, width=WIDTH, height=HEIGHT, bg="white")
-        self.canvas.pack()
+CHROME_PX = 100
 
-        self.scroll = 0
-        self.window.bind("<Up>", self.handlescrollup)
-        self.window.bind("<Down>", self.handlescrolldown)
-        self.window.bind("<MouseWheel>", self.handlemousewheel)
 
-        self.display_list = []
-
+class Tab:
+    def __init__(self) -> None:
         with open("browser.css") as f:
             self.default_style_sheet = CSSParser(f.read()).parse()
 
+        self.display_list = []
+        self.scroll = 0
+        self.history = []
+
     def load(self, url):
+        self.history.append(url)
+        self.url = url
+
         # Request
         headers, body = request(url)
 
@@ -672,11 +693,10 @@ class Browser:
         self.document = DocumentLayout(self.nodes)
 
         # Styles
-
-        # - Browser default styles
+        # Browser default styles
         rules = self.default_style_sheet.copy()
 
-        # - Imported styles
+        # Imported styles
         links = [node.attributes["href"]
                  for node in tree_to_list(self.nodes, [])
                  if isinstance(node, Element)
@@ -693,47 +713,187 @@ class Browser:
 
         # Create layout tree
         self.document.layout()
+        # print_tree(self.document)
 
         # Paint
         self.display_list = []
         self.document.paint(self.display_list)
-        self.draw()
 
-    def draw(self):
-        self.canvas.delete("all")
+    def draw(self, canvas):
         for cmd in self.display_list:
-            if cmd.top > self.scroll + HEIGHT:
+            if cmd.top > self.scroll + HEIGHT - CHROME_PX:
                 continue
             if cmd.bottom < self.scroll:
                 continue
-            cmd.execute(self.scroll, self.canvas)
+            cmd.execute(self.scroll - CHROME_PX, canvas)
 
-    def scrollup(self):
+    def scroll_up(self):
         if self.scroll > 0:
             self.scroll = max(0, self.scroll - SCROLL_STEP)
-            self.draw()
 
-    def scrolldown(self):
-        max_y = self.document.height - HEIGHT
+    def scroll_down(self):
+        max_y = self.document.height - (HEIGHT - CHROME_PX)
         self.scroll = min(self.scroll + SCROLL_STEP, max_y)
+
+    def click(self, x, y):
+        y += self.scroll
+
+        objs = [obj for obj in tree_to_list(self.document, [])
+                if obj.x <= x < obj.x+obj.width
+                and obj.y <= y < obj.y+obj.height]
+        if not objs:
+            return
+        elt = objs[-1].node
+
+        while elt:
+            if isinstance(elt, Text):
+                pass
+            elif elt.tag == 'a' and "href" in elt.attributes:
+                url = resolve_url(elt.attributes['href'], self.url)
+                return self.load(url)
+            elt = elt.parent
+
+    def go_back(self):
+        if len(self.history) > 1:
+            self.history.pop()
+            back = self.history.pop()
+            self.load(back)
+
+
+class Browser:
+    def __init__(self):
+        self.window = tkinter.Tk()
+        self.canvas = tkinter.Canvas(
+            self.window, width=WIDTH, height=HEIGHT, bg="white")
+        self.canvas.pack()
+
+        self.scroll = 0
+        self.window.bind("<Key>", self.handle_key)
+        self.window.bind("<Up>", self.handle_up)
+        self.window.bind("<Down>", self.handle_down)
+        self.window.bind("<Return>", self.handle_enter)
+        self.window.bind("<BackSpace>", self.handle_backspace)
+        self.window.bind("<MouseWheel>", self.handle_mouse_wheel)
+        self.window.bind("<Button-1>", self.handle_mouse_click)
+
+        self.url = None
+
+        self.tabs = []
+        self.active_tab = None
+
+        self.focus = None
+        self.address_bar = ""
+
+    def load(self, url):
+        new_tab = Tab()
+        new_tab.load(url)
+        self.active_tab = len(self.tabs)
+        self.tabs.append(new_tab)
         self.draw()
 
-    def handlescrollup(self, e):
-        self.scrollup()
+    def handle_key(self, e):
+        if len(e.char) == 0:
+            return
+        if not (0x20 <= ord(e.char) < 0x7f):
+            return
+        if self.focus == "address bar":
+            self.address_bar += e.char
+            self.draw()
 
-    def handlescrolldown(self, e):
-        self.scrolldown()
+    def handle_up(self, e):
+        self.handle_scroll_up()
 
-    def handlemousewheel(self, e):
+    def handle_down(self, e):
+        self.handle_scroll_down()
+
+    def handle_enter(self, e):
+        if self.focus == "address bar":
+            self.tabs[self.active_tab].load(self.address_bar)
+            self.focus = None
+            self.draw()
+
+    def handle_backspace(self, e):
+        if self.focus == "address bar":
+            self.address_bar = self.address_bar[:-1]
+            self.draw()
+
+    def handle_scroll_up(self):
+        self.tabs[self.active_tab].scroll_up()
+        self.draw()
+
+    def handle_scroll_down(self):
+        self.tabs[self.active_tab].scroll_down()
+        self.draw()
+
+    def handle_mouse_wheel(self, e):
         if e.delta == -1:
-            self.scrolldown()
+            self.handle_scroll_down()
         elif e.delta == 1:
-            self.scrollup()
+            self.handle_scroll_up()
+
+    def handle_mouse_click(self, e):
+        if e.y < CHROME_PX:
+            if 40 <= e.x < 40 + 80 * len(self.tabs) and 0 <= e.y < 40:  # Tabs
+                self.active_tab = int((e.x - 40) / 80)
+            elif 10 <= e.x < 30 and 10 <= e.y < 30:  # + button, new tab
+                self.load("https://browser.engineering/")
+            elif 10 <= e.x < 35 and 40 <= e.y < 90:  # Back button
+                self.tabs[self.active_tab].go_back()
+            elif 50 <= e.x < WIDTH - 10 and 40 <= e.y < 90:
+                self.focus = "address bar"
+                self.address_bar = ""
+        else:
+            self.tabs[self.active_tab].click(e.x, e.y - CHROME_PX)
+        self.draw()
+
+    def draw(self):
+        # Clear all
+        self.canvas.delete("all")
+
+        # Draw active tab content
+        self.tabs[self.active_tab].draw(self.canvas)
+
+        # Overwrite any half characters in chrome (tabs + address bar) area
+        self.canvas.create_rectangle(
+            0, 0, WIDTH, CHROME_PX, fill="white", outline="black")
+
+        # Draw tabs
+        tabfont = get_font(20, "normal", "roman")
+        for i, tab in enumerate(self.tabs):
+            name = "Tab {}".format(i)
+            x1, x2 = 40 + 80 * i, 120 + 80 * i
+            self.canvas.create_line(x1, 0, x1, 40, fill="black")
+            self.canvas.create_line(x2, 0, x2, 40, fill="black")
+            self.canvas.create_text(
+                x1 + 10, 10, anchor="nw", text=name, font=tabfont, fill="black")
+            if i == self.active_tab:
+                self.canvas.create_line(0, 40, x1, 40, fill="black")
+                self.canvas.create_line(x2, 40, WIDTH, 40, fill="black")
+            buttonfont = get_font(30, "normal", "roman")
+            self.canvas.create_rectangle(
+                10, 10, 30, 30, outline="black", width=1)
+            self.canvas.create_text(
+                11, 0, anchor="nw", text="+", font=buttonfont, fill="black")
+
+        # Draw address bar
+        self.canvas.create_rectangle(
+            40, 50, WIDTH-10, 90, outline="black", width=1)
+        self.canvas.create_polygon(15, 70, 30, 55, 30, 85, fill="black")
+        if self.focus == "address bar":
+            self.canvas.create_text(
+                55, 55, anchor="nw", text=self.address_bar, font=buttonfont, fill="black")
+            w = buttonfont.measure(self.address_bar)
+            self.canvas.create_line(55 + w, 55, 55 + w, 85, fill="black")
+        else:
+            url = self.tabs[self.active_tab].url
+            self.canvas.create_text(
+                55, 55, anchor="nw", text=url, font=buttonfont, fill="black")
 
 
 if __name__ == "__main__":
     import sys
     # Browser().load('http://localhost:8000/')
     # Browser().load('https://www.zggdwx.com/xiyou/1.html')
+    # Browser().load('https://browser.engineering/chrome.html')
     Browser().load(sys.argv[1])
     tkinter.mainloop()
