@@ -1,9 +1,12 @@
+import sys
+import socket
+import ssl
 import tkinter
 import tkinter.font
-from turtle import width
+import urllib.parse
 
 
-def request(url):
+def request(url, payload=None):
     scheme, url = url.split("://", 1)
     assert scheme in ["http", "https"], "Unknown scheme {}".format(scheme)
 
@@ -16,9 +19,6 @@ def request(url):
         host, port = host.split(":", 1)
         port = int(port)
 
-    import socket
-    import ssl
-
     s = socket.socket(
         family=socket.AF_INET,
         type=socket.SOCK_STREAM,
@@ -27,12 +27,17 @@ def request(url):
     if scheme == "https":
         ctx = ssl.create_default_context()
         s = ctx.wrap_socket(s, server_hostname=host)
+    method = "POST" if payload else "GET"
+
+    body = f'{method} {path} HTTP/1.0\r\nHost: {host}\r\n'
+    if payload:
+        length = len(payload.encode("utf8"))
+        body += f"Content-Length: {length}\r\n"
+
+    body += "\r\n" + (payload or "")
 
     s.connect((host, port))
-
-    data = "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n".format(
-        host=host, path=path)
-    s.send(data.encode())
+    s.send(body.encode())
 
     response = s.makefile("r", encoding="utf8", newline="\r\n")
 
@@ -205,6 +210,8 @@ BLOCK_ELEMENTS = [
     "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure",
     "figcaption", "main", "div", "table", "form", "fieldset",
     "legend", "details", "summary"
+
+
 ]
 
 
@@ -342,7 +349,10 @@ class TextLayout:
             self.x, self.y, self.width, self.height, self.font, self.word)
 
 
-class LineLayout:
+INPUT_WIDTH_PX = 200
+
+
+class InputLayout:
     def __init__(self, node, parent, previous):
         self.node = node
         self.parent = parent
@@ -350,44 +360,48 @@ class LineLayout:
         self.children = []
 
     def layout(self):
-        self.width = self.parent.width
-        self.x = self.parent.x
+        weight = self.node.style["font-weight"]
+        style = self.node.style["font-style"]
+        if style == 'normal':
+            style = "roman"  # Translate CSS "normal" to Tk "roman"
+        # Translate CSS pixels to Tk points
+        size = (int(float(self.node.style["font-size"][:-2]) * .75))
+        self.font = get_font(size, weight, style)
 
+        self.width = INPUT_WIDTH_PX
         if self.previous:
-            self.y = self.previous.y + self.previous.height
+            space = self.previous.font.measure(" ")
+            self.x = self.previous.x + self.previous.width + space
         else:
-            self.y = self.parent.y
+            self.x = self.parent.x
 
-        for word in self.children:
-            word.layout()
-
-        if not self.children:
-            self.height = 0
-            return
-
-        max_ascent = max([word.font.metrics("ascent")
-                         for word in self.children])
-        baseline = self.y + 1.25 * max_ascent
-        for word in self.children:
-            word.y = baseline - word.font.metrics("ascent")
-        max_descent = max([word.font.metrics("descent")
-                          for word in self.children])
-        self.height = 1.25 * (max_ascent + max_descent)
+        self.height = self.font.metrics("linespace")
 
     def paint(self, display_list):
-        for child in self.children:
-            child.paint(display_list)
+        bgcolor = self.node.style.get("background-color", "transparent")
+        if(bgcolor != "transparent"):
+            x2, y2 = self.x + self.width, self.y + self.height
+            rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
+            display_list.append(rect)
+
+        if self.node.tag == "input":
+            text = self.node.attributes.get("value", "")
+        elif self.node.tag == "button":
+            text = self.node.children[0].text
+
+        color = self.node.style["color"]
+        display_list.append(DrawText(self.x, self.y, text, self.font, color))
 
     def __repr__(self):
-        return "LineLayout(x={}, y={}, width={}, height={})".format(
-            self.x, self.y, self.width, self.height)
+        return "InputLayout(x={}, y={}, width={}, height={}, font={}, word={}".format(
+            self.x, self.y, self.width, self.height, self.font, self.word)
 
 
 class InlineLayout:
     def __init__(self, node, parent, previous):
         self.node = node
         self.parent = parent
-        self.children: list[LineLayout] = []
+        self.children = []
         self.previous = previous
 
     def layout(self):
@@ -408,12 +422,22 @@ class InlineLayout:
     def recurse(self, node):
         if isinstance(node, Text):
             self.text(node)
-
-        elif isinstance(node, Element):
+        else:
             if node.tag == 'br':
                 self.new_line()
-            for child in node.children:
-                self.recurse(child)
+            elif node.tag == 'input' or node.tag == 'button':
+                self.input(node)
+            else:
+                for child in node.children:
+                    self.recurse(child)
+
+    def get_font(self, node):
+        weight = node.style["font-weight"]
+        style = node.style["font-style"]
+        if style == "normal":
+            style = "roman"
+        size = int(float(node.style["font-size"][:-2]) * .75)
+        return get_font(size, weight, style)
 
     def new_line(self):
         self.previous_word = None
@@ -421,6 +445,17 @@ class InlineLayout:
         last_line = self.children[-1] if self.children else None
         new_line = LineLayout(self.node, self, last_line)
         self.children.append(new_line)
+
+    def input(self, node):
+        w = INPUT_WIDTH_PX
+        if self.cursor_x + w > self.x + self.width:
+            self.new_line()
+        line = self.children[-1]
+        input = InputLayout(node, line, self.previous_word)
+        line.children.append(input)
+        self.previous_word = input
+        font = self.get_font(node)
+        self.cursor_x += w + font.measure(" ")
 
     def text(self, node):
         weight = node.style["font-weight"]
@@ -453,6 +488,47 @@ class InlineLayout:
 
     def __repr__(self):
         return "InlineLayout(x={}, y={}, width={}, height={})".format(
+            self.x, self.y, self.width, self.height)
+
+
+class LineLayout:
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.previous = previous
+        self.children = []
+
+    def layout(self):
+        self.width = self.parent.width
+        self.x = self.parent.x
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
+        for word in self.children:
+            word.layout()
+
+        if not self.children:
+            self.height = 0
+            return
+
+        max_ascent = max([word.font.metrics("ascent")
+                          for word in self.children])
+        baseline = self.y + 1.25 * max_ascent
+        for word in self.children:
+            word.y = baseline - word.font.metrics("ascent")
+        max_descent = max([word.font.metrics("descent")
+                           for word in self.children])
+        self.height = 1.25 * (max_ascent + max_descent)
+
+    def paint(self, display_list):
+        for child in self.children:
+            child.paint(display_list)
+
+    def __repr__(self):
+        return "LineLayout(x={}, y={}, width={}, height={})".format(
             self.x, self.y, self.width, self.height)
 
 
@@ -677,24 +753,22 @@ class Tab:
         self.display_list = []
         self.scroll = 0
         self.history = []
+        self.focus = None
 
-    def load(self, url):
+    def load(self, url, body=None):
         self.history.append(url)
         self.url = url
 
         # Request
-        headers, body = request(url)
+        headers, body = request(url, body)
 
         # DOM tree
         self.nodes = HTMLParser(body).parse()
         # print_tree(self.nodes)
 
-        # Layout tree init
-        self.document = DocumentLayout(self.nodes)
-
-        # Styles
+        # Load styles
         # Browser default styles
-        rules = self.default_style_sheet.copy()
+        self.rules = self.default_style_sheet.copy()
 
         # Imported styles
         links = [node.attributes["href"]
@@ -708,10 +782,16 @@ class Tab:
                 header, body = request(resolve_url(link, url))
             except:
                 continue
-            rules.extend(CSSParser(body).parse())
-        style(self.nodes, sorted(rules, key=cascade_priority))
+            self.rules.extend(CSSParser(body).parse())
 
-        # Create layout tree
+        self.render()
+
+    def render(self):
+        # Styling
+        style(self.nodes, sorted(self.rules, key=cascade_priority))
+
+        # Layout tree
+        self.document = DocumentLayout(self.nodes)
         self.document.layout()
         # print_tree(self.document)
 
@@ -719,13 +799,21 @@ class Tab:
         self.display_list = []
         self.document.paint(self.display_list)
 
-    def draw(self, canvas):
+    def draw(self, canvas: tkinter.Canvas):
         for cmd in self.display_list:
             if cmd.top > self.scroll + HEIGHT - CHROME_PX:
                 continue
             if cmd.bottom < self.scroll:
                 continue
             cmd.execute(self.scroll - CHROME_PX, canvas)
+
+        if self.focus:
+            obj = [obj for obj in tree_to_list(
+                self.document, []) if obj.node == self.focus][0]
+            text = self.focus.attributes.get("value", "")
+            x = obj.x + obj.font.measure(text)
+            y = obj.y - self.scroll + CHROME_PX
+            canvas.create_line(x, y, x, y + obj.height)
 
     def scroll_up(self):
         if self.scroll > 0:
@@ -751,7 +839,39 @@ class Tab:
             elif elt.tag == 'a' and "href" in elt.attributes:
                 url = resolve_url(elt.attributes['href'], self.url)
                 return self.load(url)
+            elif elt.tag == 'input':
+                self.focus = elt
+                elt.attributes["value"] = ""
+                return self.render()
+            elif elt.tag == 'button':
+                while elt:
+                    if elt.tag == 'form' and 'action' in elt.attributes:
+                        return self.submit_form(elt)
+                    elt = elt.parent
             elt = elt.parent
+
+    def key_press(self, char):
+        if self.focus:
+            self.focus.attributes["value"] += char
+            self.render()
+
+    def submit_form(self, elt):
+        inputs = [node for node in tree_to_list(elt, [])
+                  if isinstance(node, Element)
+                  and node.tag == 'input'
+                  and "name" in node.attributes]
+
+        body = ""
+        for input in inputs:
+            name = input.attributes.get("name")
+            value = input.attributes.get("value", "")
+            name = urllib.parse.quote(name)
+            value = urllib.parse.quote(value)
+            body += "&" + name + "=" + value
+        body = body[1:]
+
+        url = resolve_url(elt.attributes["action"], self.url)
+        self.load(url, body)
 
     def go_back(self):
         if len(self.history) > 1:
@@ -799,6 +919,9 @@ class Browser:
         if self.focus == "address bar":
             self.address_bar += e.char
             self.draw()
+        elif self.focus == "content":
+            self.tabs[self.active_tab].key_press(e.char)
+            self.draw()
 
     def handle_up(self, e):
         self.handle_scroll_up()
@@ -843,6 +966,7 @@ class Browser:
                 self.focus = "address bar"
                 self.address_bar = ""
         else:
+            self.focus = "content"
             self.tabs[self.active_tab].click(e.x, e.y - CHROME_PX)
         self.draw()
 
@@ -891,7 +1015,6 @@ class Browser:
 
 
 if __name__ == "__main__":
-    import sys
     # Browser().load('http://localhost:8000/')
     # Browser().load('https://www.zggdwx.com/xiyou/1.html')
     # Browser().load('https://browser.engineering/chrome.html')
