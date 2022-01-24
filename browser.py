@@ -808,8 +808,8 @@ class Tab:
             cmd.execute(self.scroll - CHROME_PX, canvas)
 
         if self.focus:
-            obj = [obj for obj in tree_to_list(
-                self.document, []) if obj.node == self.focus][0]
+            obj = [obj for obj in tree_to_list(self.document, [])
+                   if obj.node == self.focus][0]
             text = self.focus.attributes.get("value", "")
             x = obj.x + obj.font.measure(text)
             y = obj.y - self.scroll + CHROME_PX
@@ -824,6 +824,7 @@ class Tab:
         self.scroll = min(self.scroll + SCROLL_STEP, max_y)
 
     def click(self, x, y):
+        self.focus = None
         y += self.scroll
 
         objs = [obj for obj in tree_to_list(self.document, [])
