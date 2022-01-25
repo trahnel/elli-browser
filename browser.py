@@ -4,6 +4,7 @@ import ssl
 import tkinter
 import tkinter.font
 import urllib.parse
+from wsgiref import headers
 import dukpy
 
 
@@ -753,6 +754,11 @@ EVENT_DISPATCH_CODE = \
     "new Node(dukpy.handle).dispatchEvent(new Event(dukpy.type))"
 
 
+def url_origin(url):
+    scheme_colon, _, host, _ = url.split('/', 3)
+    return f'{scheme_colon}//{host}'
+
+
 class JSContext:
     def __init__(self, tab) -> None:
         self.tab = tab
@@ -761,6 +767,8 @@ class JSContext:
         self.interp.export_function("querySelectorAll", self.querySelectorAll)
         self.interp.export_function("getAttribute", self.getAttribute)
         self.interp.export_function("innerHTML_set", self.innerHTML_set)
+        self.interp.export_function(
+            "XMLHttpRequest_send", self.XMLHttpRequest_send)
 
         self.node_to_handle = {}
         self.handle_to_node = {}
@@ -806,6 +814,14 @@ class JSContext:
             child.parent = elt
 
         self.tab.render()
+
+    def XMLHttpRequest_send(self, method, url, body):
+        full_url = resolve_url(url, self.tab.url)
+        if url_origin(full_url) != url_origin(self.tab.url):
+            raise Exception('Cross-Origin XHR request not allowed')
+
+        headers, out = request(full_url, payload=body)
+        return out
 
 
 CHROME_PX = 100

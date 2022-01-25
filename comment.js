@@ -9,11 +9,21 @@ function lengthCheck() {
 }
 
 form = document.querySelectorAll('form')[0];
-form.addEventListener('submit', function (e) {
-  if (!allowSubmit) {
-    e.preventDefault();
-  }
-});
+if (form) {
+  form.addEventListener('submit', function (e) {
+    if (!allowSubmit) {
+      e.preventDefault();
+    }
+  });
+}
 
 input = document.querySelectorAll('input')[0];
-input.addEventListener('keydown', lengthCheck);
+if (input) {
+  input.addEventListener('keydown', lengthCheck);
+}
+
+// x = new XMLHttpRequest();
+// x.open('GET', 'http://localhost:8000/', false);
+// x.send();
+// console.log(x.responseText);
+// user = x.responseText.split(' ')[2].split('<')[0];

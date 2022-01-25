@@ -10,14 +10,21 @@ ENTRIES = [('Tomte was here', 'santa'),
            ]
 
 LOGINS = {
-    "crashoverride": "0cool",
-    "cerealkiller": "emmanuel"
+    'crashoverride': '0cool',
+    'cerealkiller': 'emmanuel',
+    '': ''
 }
 
 SESSIONS = {}
 
 
 def do_login(session, params):
+    if 'nonce' not in session or 'nonce' not in params:
+        return
+    if session['nonce'] != params['nonce']:
+        return
+
+    print(f'do_login nonce={session["nonce"]}')
     username = params.get('username')
     password = params.get('password')
     if username in LOGINS and LOGINS[username] == password:
@@ -30,11 +37,15 @@ def do_login(session, params):
 
 
 def login_form(session):
+    nonce = str(random.random())[2:]
+    session['nonce'] = nonce
+
     body = '<!doctype html>'
     body += '<form action=/ method=post>'
     body += '<p>Username: <input name=username></p>'
     body += '<p>Password: <input name=password type=password></p>'
     body += '<p><button>Log in</button></p>'
+    body += f'<input name=nonce type=hidden value={nonce}>'
     body += '</form>'
     return body
 
@@ -47,11 +58,15 @@ def show_comments(session):
         out += f'by <i> {who}</i></p>'
 
     if "user" in session:
+        nonce = str(random.random())[2:]
+        session['nonce'] = nonce
+
         out += f'<h1>Hello, {session["user"]}</h1>'
-        out += "<form action=add method=post>"
-        out += "<p><input name=guest></p>"
-        out += "<p><button>Sign the book!</button></p>"
-        out += "</form>"
+        out += '<form action=add method=post>'
+        out += '<p><input name=guest></p>'
+        out += '<p><button>Sign the book!</button></p>'
+        out += f'<input name=nonce type=hidden value={nonce}>'
+        out += '</form>'
     else:
         out += '<a href=/login>Sign in to write in the guest book</a>'
 
@@ -72,8 +87,13 @@ def form_decode(body: str):
 
 
 def add_entry(session, params):
+    if 'nonce' not in session or 'nonce' not in params:
+        return
+    if session['nonce'] != params['nonce']:
+        return
     if 'user' not in session:
         return
+
     if 'guest' in params and len(params['guest']) <= 100:
         ENTRIES.append((params['guest'], session['user']))
 

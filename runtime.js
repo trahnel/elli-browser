@@ -44,6 +44,12 @@ Node.prototype.dispatchEvent = function (evt) {
   return evt.do_default;
 };
 
+Object.defineProperty(Node.prototype, 'innerHTML', {
+  set: function (s) {
+    call_python('innerHTML_set', this.handle, s.toString());
+  },
+});
+
 function Event(type) {
   this.type = type;
   this.do_default = true;
@@ -52,8 +58,22 @@ function Event(type) {
 Event.prototype.preventDefault = function () {
   this.do_default = false;
 };
-Object.defineProperty(Node.prototype, 'innerHTML', {
-  set: function (s) {
-    call_python('innerHTML_set', this.handle, s.toString());
-  },
-});
+
+function XMLHttpRequest() {}
+
+XMLHttpRequest.prototype.open = function (method, url, is_async) {
+  if (is_async) {
+    throw Error('Async XHR is not supported');
+  }
+  this.method = method;
+  this.url = url;
+};
+
+XMLHttpRequest.prototype.send = function (body) {
+  this.responseText = call_python(
+    'XMLHttpRequest_send',
+    this.method,
+    this.url,
+    body
+  );
+};
