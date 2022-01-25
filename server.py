@@ -2,6 +2,7 @@ import random
 import urllib.parse
 from datetime import datetime
 import socket
+import html
 
 
 ENTRIES = [('Tomte was here', 'santa'),
@@ -24,7 +25,6 @@ def do_login(session, params):
     if session['nonce'] != params['nonce']:
         return
 
-    print(f'do_login nonce={session["nonce"]}')
     username = params.get('username')
     password = params.get('password')
     if username in LOGINS and LOGINS[username] == password:
@@ -54,8 +54,8 @@ def show_comments(session):
     out = "<!doctype html>"
 
     for entry, who in ENTRIES:
-        out += f'<p>{entry}\n'
-        out += f'by <i> {who}</i></p>'
+        out += f'<p>{html.escape(entry)}\n'
+        out += f'by <i> {html.escape(who)}</i></p>'
 
     if "user" in session:
         nonce = str(random.random())[2:]
@@ -168,6 +168,8 @@ def handle_connection(conx):
     response += f'Content-Length: {length}\r\n'
     if 'cookie' not in headers:
         response += f'Set-Cookie: token={token}; SameSite=Lax\r\n'
+    csp = "default-src http://localhost:8000"
+    response += f"Content-Security-Policy: {csp}\r\n"
 
     response += f'\r\n{body}'
 
@@ -175,6 +177,7 @@ def handle_connection(conx):
     conx.close()
 
 
+PORT = 8000
 if __name__ == '__main__':
     s = socket.socket(
         family=socket.AF_INET,
@@ -182,8 +185,9 @@ if __name__ == '__main__':
         proto=socket.IPPROTO_TCP
     )
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('', 8000))
+    s.bind(('', PORT))
     s.listen()
+    print(f"Server running on port {PORT}...")
 
     while True:
         conx, addr = s.accept()

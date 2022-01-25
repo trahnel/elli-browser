@@ -41,6 +41,7 @@ def request(url, top_level_url, payload=None):
 
         if top_level_url and params.get("samesite", "none") == "lax":
             _, _, top_level_host, _ = top_level_url.split("/", 3)
+            top_level_host, _ = top_level_host.split(":", 1)
             allow_cookie = (host == top_level_host or method == "GET")
         if allow_cookie:
             body += f'Cookie: {cookie}\r\n'
@@ -831,6 +832,8 @@ class JSContext:
 
     def XMLHttpRequest_send(self, method, url, body):
         full_url = resolve_url(url, self.tab.url)
+        if not self.tab.allowed_request(full_url):
+            raise Exception("Cross-origin XHR blocked by CSP")
         if url_origin(full_url) != url_origin(self.tab.url):
             raise Exception('Cross-Origin XHR request not allowed')
 
@@ -844,13 +847,14 @@ COOKIE_JAR = {}
 
 class Tab:
     def __init__(self) -> None:
-        with open("browser.css") as f:
-            self.default_style_sheet = CSSParser(f.read()).parse()
-
         self.display_list = []
         self.scroll = 0
         self.history = []
         self.focus = None
+        self.url = None
+
+        with open("browser.css") as f:
+            self.default_style_sheet = CSSParser(f.read()).parse()
 
     def load(self, url, body=None):
         # Request
@@ -858,6 +862,12 @@ class Tab:
 
         self.history.append(url)
         self.url = url
+
+        self.allowed_origins = None
+        if "content-security-policy" in headers:
+            csp = headers["content-security-policy"].split()
+            if len(csp) > 0 and csp[0] == "default-src":
+                self.allowed_origins = csp[1:]
 
         # DOM tree
         self.nodes = HTMLParser(body).parse()
@@ -875,8 +885,11 @@ class Tab:
                  and "href" in node.attributes
                  and node.attributes.get("rel") == "stylesheet"]
         for link in links:
+            style_url = resolve_url(link, url)
+            if not self.allowed_request(style_url):
+                print("Blocked style", link, "due to CSP")
+                continue
             try:
-                style_url = resolve_url(link, url)
                 header, body = request(style_url, url)
             except:
                 continue
@@ -891,6 +904,9 @@ class Tab:
         self.js = JSContext(self)
         for script in scripts:
             script_url = resolve_url(script, url)
+            if not self.allowed_request(script_url):
+                print("Blocked script", script, "due to CSP")
+                continue
             header, body = request(script_url, url)
             try:
                 self.js.run(body)
@@ -1002,6 +1018,10 @@ class Tab:
             self.history.pop()
             back = self.history.pop()
             self.load(back)
+
+    def allowed_request(self, url):
+        return self.allowed_origins == None or \
+            url_origin(url) in self.allowed_origins
 
 
 class Browser:
