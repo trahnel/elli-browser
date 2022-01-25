@@ -1,11 +1,10 @@
-import sys
 import socket
 import ssl
-import tkinter
-import tkinter.font
 import urllib.parse
-from wsgiref import headers
 import dukpy
+import ctypes
+import sdl2
+import skia
 
 
 def request(url, top_level_url, payload=None):
@@ -89,12 +88,73 @@ SCROLL_STEP = 100
 FONTS = {}
 
 
-def get_font(size, weight, slant):
-    key = (size, weight, slant)
+def get_font(size, weight, style):
+    key = (weight, style)
     if key not in FONTS:
-        font = tkinter.font.Font(size=size, weight=weight, slant=slant)
+        skia_weight = skia.FontStyle.kBold_Weight if weight == "bold" \
+            else skia.FontStyle.kNormal_Weight
+        skia_style = skia.FontStyle.kItalic_Slant if style == "italic" \
+            else skia.FontStyle.kUpright_Slant
+        skia_width = skia.FontStyle.kNormal_Width
+        style_info = skia.FontStyle(skia_weight, skia_width, skia_style)
+
+        font = skia.Typeface('Arial', style_info)
         FONTS[key] = font
-    return FONTS[key]
+    return skia.Font(FONTS[key], size)
+
+
+def parse_color(color):
+    if color == "white":
+        return skia.ColorWHITE
+    elif color == "lightblue":
+        return skia.ColorSetARGB(0xFF, 0xAD, 0xD8, 0xE6)
+    elif color == "orange":
+        return skia.ColorSetARGB(0xFF, 0xFF, 0xA5, 0x00)
+    elif color == "red":
+        return skia.ColorRED
+    elif color == "green":
+        return skia.ColorGREEN
+    elif color == "blue":
+        return skia.ColorBLUE
+    elif color == "gray":
+        return skia.ColorGRAY
+    else:
+        return skia.ColorBLACK
+
+
+def draw_line(canvas, x1, y1, x2, y2):
+    path = skia.Path().moveTo(x1, y1).lineTo(x2, y2)
+    paint = skia.Paint(Color=skia.ColorBLACK)
+    paint.setStyle(skia.Paint.kStroke_Style)
+    paint.setStrokeWidth(1)
+    canvas.drawPath(path, paint)
+
+
+def draw_text(canvas, x, y, text, font, color=None):
+    sk_color = parse_color(color)
+    paint = skia.Paint(AntiAlias=True, Color=sk_color)
+    canvas.drawString(
+        text, float(x), y - font.getMetrics().fAscent,
+        font, paint
+    )
+
+
+def draw_rect(canvas, l, t, r, b, fill=None, width=1):
+    paint = skia.Paint()
+    if fill:
+        paint.setStrokeWidth(width)
+        paint.setColor(parse_color(fill))
+    else:
+        paint.setStyle(skia.Paint.kStroke_Style)
+        paint.setStrokeWidth(1)
+        paint.setColor(skia.ColorBLACK)
+    rect = skia.Rect.MakeLTRB(l, t, r, b)
+    canvas.drawRect(rect, paint)
+
+
+def linespace(font):
+    metrics = font.getMetrics()
+    return metrics.fDescent - metrics.fAscent
 
 
 class Text:
@@ -353,14 +413,14 @@ class TextLayout:
         size = (int(float(self.node.style["font-size"][:-2]) * .75))
         self.font = get_font(size, weight, style)
 
-        self.width = self.font.measure(self.word)
+        self.width = self.font.measureText(self.word)
         if self.previous:
-            space = self.previous.font.measure(" ")
+            space = self.previous.font.measureText(" ")
             self.x = self.previous.x + self.previous.width + space
         else:
             self.x = self.parent.x
 
-        self.height = self.font.metrics("linespace")
+        self.height = linespace(self.font)
 
     def paint(self, display_list):
         color = self.node.style["color"]
@@ -393,12 +453,12 @@ class InputLayout:
 
         self.width = INPUT_WIDTH_PX
         if self.previous:
-            space = self.previous.font.measure(" ")
+            space = self.previous.font.measureText(" ")
             self.x = self.previous.x + self.previous.width + space
         else:
             self.x = self.parent.x
 
-        self.height = self.font.metrics("linespace")
+        self.height = linespace(self.font)
 
     def paint(self, display_list):
         bgcolor = self.node.style.get("background-color", "transparent")
@@ -478,7 +538,7 @@ class InlineLayout:
         line.children.append(input)
         self.previous_word = input
         font = self.get_font(node)
-        self.cursor_x += w + font.measure(" ")
+        self.cursor_x += w + font.measureText(" ")
 
     def text(self, node):
         weight = node.style["font-weight"]
@@ -489,14 +549,14 @@ class InlineLayout:
         size = (int(float(node.style["font-size"][:-2]) * .75))
         font = get_font(size, weight, style)
         for word in node.text.split():
-            w = font.measure(word)
+            w = font.measureText(word)
             if self.cursor_x + w > self.width - HSTEP:
                 self.new_line()
             line = self.children[-1]
             text = TextLayout(node, word, line, self.previous_word)
             line.children.append(text)
             self.previous_word = text
-            self.cursor_x += w + font.measure(" ")
+            self.cursor_x += w + font.measureText(" ")
 
     def paint(self, display_list):
         bgcolor = self.node.style.get("background-color", "transparent")
@@ -537,12 +597,12 @@ class LineLayout:
             self.height = 0
             return
 
-        max_ascent = max([word.font.metrics("ascent")
+        max_ascent = max([-word.font.getMetrics().fAscent
                           for word in self.children])
         baseline = self.y + 1.25 * max_ascent
         for word in self.children:
-            word.y = baseline - word.font.metrics("ascent")
-        max_descent = max([word.font.metrics("descent")
+            word.y = baseline + word.font.getMetrics().fAscent
+        max_descent = max([word.font.getMetrics().fDescent
                            for word in self.children])
         self.height = 1.25 * (max_ascent + max_descent)
 
@@ -621,19 +681,20 @@ class DrawText:
     def __init__(self, x1, y1, text, font, color):
         self.top = y1
         self.left = x1
+        self.right = x1 + font.measureText(text)
+        self.bottom = y1 + linespace(font)
+        self.rect = skia.Rect.MakeLTRB(x1, y1, self.right, self.bottom)
         self.text = text
         self.font = font
-        self.bottom = y1 + font.metrics("linespace")
         self.color = color
 
-    def execute(self, scroll: int, canvas: tkinter.Canvas):
-        canvas.create_text(
-            self.left, self.top-scroll,
-            text=self.text,
-            font=self.font,
-            fill=self.color,
-            anchor='nw'
-        )
+    def execute(self, scroll: int, canvas):
+        draw_text(canvas,
+                  self.left,
+                  self.top - scroll,
+                  self.text,
+                  self.font,
+                  self.color)
 
 
 class DrawRect:
@@ -642,15 +703,18 @@ class DrawRect:
         self.left = x1
         self.bottom = y2
         self.right = x2
+        self.rect = skia.Rect.MakeLTRB(x1, y1, x2, y2)
         self.color = color
 
-    def execute(self, scroll, canvas: tkinter.Canvas):
-        canvas.create_rectangle(
-            self.left, self.top-scroll,
-            self.right, self.bottom-scroll,
-            width=0,
-            fill=self.color
-        )
+    def execute(self, scroll, canvas):
+        draw_rect(canvas,
+                  self.left,
+                  self.top - scroll,
+                  self.right,
+                  self.bottom - scroll,
+                  self.color,
+                  width=0,
+                  )
 
 
 def resolve_url(url: str, current: str):
@@ -928,7 +992,7 @@ class Tab:
         self.display_list = []
         self.document.paint(self.display_list)
 
-    def draw(self, canvas: tkinter.Canvas):
+    def draw(self, canvas):
         for cmd in self.display_list:
             if cmd.top > self.scroll + HEIGHT - CHROME_PX:
                 continue
@@ -940,9 +1004,9 @@ class Tab:
             obj = [obj for obj in tree_to_list(self.document, [])
                    if obj.node == self.focus][0]
             text = self.focus.attributes.get("value", "")
-            x = obj.x + obj.font.measure(text)
+            x = obj.x + obj.font.measureText(text)
             y = obj.y - self.scroll + CHROME_PX
-            canvas.create_line(x, y, x, y + obj.height)
+            draw_line(canvas, x, y, x, y + obj.height)
 
     def scroll_up(self):
         if self.scroll > 0:
@@ -1026,22 +1090,31 @@ class Tab:
 
 class Browser:
     def __init__(self):
-        self.window = tkinter.Tk()
-        self.canvas = tkinter.Canvas(
-            self.window, width=WIDTH, height=HEIGHT, bg="white")
-        self.canvas.pack()
+        self.sdl_window = sdl2.SDL_CreateWindow(
+            b"Browser", sdl2.SDL_WINDOWPOS_CENTERED,
+            sdl2.SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, sdl2.SDL_WINDOW_SHOWN)
+
+        self.root_surface = skia.Surface.MakeRaster(
+            skia.ImageInfo.Make(
+                WIDTH, HEIGHT,
+                ct=skia.kRGBA_8888_ColorType,
+                at=skia.kUnpremul_AlphaType
+            )
+        )
+
+        if sdl2.SDL_BYTEORDER == sdl2.SDL_BIG_ENDIAN:
+            self.RED_MASK = 0xff000000
+            self.GREEN_MASK = 0x00ff0000
+            self.BLUE_MASK = 0x0000ff00
+            self.ALPHA_MASK = 0x000000ff
+        else:
+            self.RED_MASK = 0x000000ff
+            self.GREEN_MASK = 0x0000ff00
+            self.BLUE_MASK = 0x00ff0000
+            self.ALPHA_MASK = 0xff000000
 
         self.scroll = 0
-        self.window.bind("<Key>", self.handle_key)
-        self.window.bind("<Up>", self.handle_up)
-        self.window.bind("<Down>", self.handle_down)
-        self.window.bind("<Return>", self.handle_enter)
-        self.window.bind("<BackSpace>", self.handle_backspace)
-        self.window.bind("<MouseWheel>", self.handle_mouse_wheel)
-        self.window.bind("<Button-1>", self.handle_mouse_click)
-
         self.url = None
-
         self.tabs = []
         self.active_tab = None
 
@@ -1055,6 +1128,66 @@ class Browser:
         self.tabs.append(new_tab)
         self.draw()
 
+    def draw(self):
+        # Clear all
+        canvas = self.root_surface.getCanvas()
+        canvas.clear(skia.ColorWHITE)
+
+        # Draw active tab content
+        self.tabs[self.active_tab].draw(canvas)
+
+        # Overwrite any half characters in chrome (tabs + address bar) area
+        draw_rect(canvas, 0, 0, WIDTH, CHROME_PX, fill="white")
+
+        # Draw tabs
+        tabfont = skia.Font(skia.Typeface('Arial'), 20)
+        for i, tab in enumerate(self.tabs):
+            name = f"Tab {i}"
+            x1, x2 = 40 + 80 * i, 120 + 80 * i
+            draw_line(canvas, x1, 0, x1, 40)
+            draw_line(canvas, x2, 0, x2, 40)
+            draw_text(canvas, x1 + 10, 10, name, tabfont)
+            if i == self.active_tab:
+                draw_line(canvas, 0, 40, x1, 40)
+                draw_line(canvas, x2, 40, WIDTH, 40)
+
+        # Plus button to add a tab
+        buttonfont = skia.Font(skia.Typeface('Arial'), 30)
+        draw_rect(canvas, 10, 10, 30, 30)
+        draw_text(canvas, 11, 4, "+", buttonfont)
+
+        # Draw address bar
+        draw_rect(canvas, 40, 50, WIDTH - 10, 90)
+        if self.focus == "address bar":
+            draw_text(canvas, 55, 55, self.address_bar, buttonfont)
+            w = buttonfont.measureText(self.address_bar)
+            draw_line(canvas, 55 + w, 55, 55 + w, 85)
+        else:
+            url = self.tabs[self.active_tab].url
+            draw_text(canvas, 55, 55, url, buttonfont)
+
+        # Draw back button
+        draw_rect(canvas, 10, 50, 35, 90)
+        path = skia.Path().moveTo(15, 70).lineTo(30, 55).lineTo(30, 85)
+        paint = skia.Paint(Color=skia.ColorBLACK, Style=skia.Paint.kFill_Style)
+        canvas.drawPath(path, paint)
+
+        skia_image = self.root_surface.makeImageSnapshot()
+        skia_bytes = skia_image.tobytes()
+
+        depth = 32  # Bits per pixel
+        pitch = 4 * WIDTH  # Bytes per row
+        sdl_surface = sdl2.SDL_CreateRGBSurfaceFrom(
+            skia_bytes, WIDTH, HEIGHT, depth, pitch,
+            self.RED_MASK, self.GREEN_MASK, self.BLUE_MASK, self.ALPHA_MASK
+        )
+
+        rect = sdl2.SDL_Rect(0, 0, WIDTH, HEIGHT)
+        window_surface = sdl2.SDL_GetWindowSurface(self.sdl_window)
+        # SDL_BlitSurface does the actual copy
+        sdl2.SDL_BlitSurface(sdl_surface, rect, window_surface, rect)
+        sdl2.SDL_UpdateWindowSurface(self.sdl_window)
+
     def handle_key(self, e):
         if len(e.char) == 0:
             return
@@ -1067,11 +1200,13 @@ class Browser:
             self.tabs[self.active_tab].key_press(e.char)
             self.draw()
 
-    def handle_up(self, e):
-        self.handle_scroll_up()
+    def handle_up(self):
+        self.tabs[self.active_tab].scroll_up()
+        self.draw()
 
-    def handle_down(self, e):
-        self.handle_scroll_down()
+    def handle_down(self):
+        self.tabs[self.active_tab].scroll_down()
+        self.draw()
 
     def handle_enter(self, e):
         if self.focus == "address bar":
@@ -1093,12 +1228,12 @@ class Browser:
         self.draw()
 
     def handle_mouse_wheel(self, e):
-        if e.delta == -1:
+        if e.y == -1:
             self.handle_scroll_down()
-        elif e.delta == 1:
+        elif e.y == 1:
             self.handle_scroll_up()
 
-    def handle_mouse_click(self, e):
+    def handle_click(self, e):
         if e.y < CHROME_PX:
             if 40 <= e.x < 40 + 80 * len(self.tabs) and 0 <= e.y < 40:  # Tabs
                 self.active_tab = int((e.x - 40) / 80)
@@ -1114,53 +1249,36 @@ class Browser:
             self.tabs[self.active_tab].click(e.x, e.y - CHROME_PX)
         self.draw()
 
-    def draw(self):
-        # Clear all
-        self.canvas.delete("all")
-
-        # Draw active tab content
-        self.tabs[self.active_tab].draw(self.canvas)
-
-        # Overwrite any half characters in chrome (tabs + address bar) area
-        self.canvas.create_rectangle(
-            0, 0, WIDTH, CHROME_PX, fill="white", outline="black")
-
-        # Draw tabs
-        tabfont = get_font(20, "normal", "roman")
-        for i, tab in enumerate(self.tabs):
-            name = "Tab {}".format(i)
-            x1, x2 = 40 + 80 * i, 120 + 80 * i
-            self.canvas.create_line(x1, 0, x1, 40, fill="black")
-            self.canvas.create_line(x2, 0, x2, 40, fill="black")
-            self.canvas.create_text(
-                x1 + 10, 10, anchor="nw", text=name, font=tabfont, fill="black")
-            if i == self.active_tab:
-                self.canvas.create_line(0, 40, x1, 40, fill="black")
-                self.canvas.create_line(x2, 40, WIDTH, 40, fill="black")
-            buttonfont = get_font(30, "normal", "roman")
-            self.canvas.create_rectangle(
-                10, 10, 30, 30, outline="black", width=1)
-            self.canvas.create_text(
-                11, 0, anchor="nw", text="+", font=buttonfont, fill="black")
-
-        # Draw address bar
-        self.canvas.create_rectangle(
-            40, 50, WIDTH-10, 90, outline="black", width=1)
-        self.canvas.create_polygon(15, 70, 30, 55, 30, 85, fill="black")
-        if self.focus == "address bar":
-            self.canvas.create_text(
-                55, 55, anchor="nw", text=self.address_bar, font=buttonfont, fill="black")
-            w = buttonfont.measure(self.address_bar)
-            self.canvas.create_line(55 + w, 55, 55 + w, 85, fill="black")
-        else:
-            url = self.tabs[self.active_tab].url
-            self.canvas.create_text(
-                55, 55, anchor="nw", text=url, font=buttonfont, fill="black")
+    def handle_quit(self):
+        sdl2.SDL_DestroyWindow(self.sdl_window)
 
 
 if __name__ == "__main__":
-    # Browser().load('http://localhost:8000/')
-    # Browser().load('https://www.zggdwx.com/xiyou/1.html')
-    # Browser().load('https://browser.engineering/chrome.html')
-    Browser().load(sys.argv[1])
-    tkinter.mainloop()
+    import sys
+    sdl2.SDL_Init(sdl2.SDL_INIT_EVENTS)
+    browser = Browser()
+    # browser.load(sys.argv[1])
+    browser.load("http://localhost:8000/")
+
+    event = sdl2.SDL_Event()
+    while True:
+        while sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
+            if event.type == sdl2.SDL_QUIT:
+                browser.handle_quit()
+                sdl2.SDL_Quit()
+                sys.exit()
+            elif event.type == sdl2.SDL_MOUSEBUTTONUP:
+                browser.handle_click(event.button)
+            elif event.type == sdl2.SDL_MOUSEWHEEL:
+                browser.handle_mouse_wheel(event.wheel)
+            elif event.type == sdl2.SDL_KEYDOWN:
+                if event.key.keysym.sym == sdl2.SDLK_RETURN:
+                    browser.handle_enter()
+                elif event.key.keysym.sym == sdl2.SDLK_BACKSPACE:
+                    browser.handle_backspace()
+                elif event.key.keysym.sym == sdl2.SDLK_DOWN:
+                    browser.handle_down()
+                elif event.key.keysym.sym == sdl2.SDLK_UP:
+                    browser.handle_up()
+            elif event.type == sdl2.SDL_TEXTINPUT:
+                browser.handle_key(event.text.text.decode('utf8'))
