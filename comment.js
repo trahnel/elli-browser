@@ -8,7 +8,7 @@ function lengthCheck() {
   }
 }
 
-form = document.querySelector('form')[0];
+form = document.querySelectorAll('form')[0];
 form.addEventListener('submit', function (e) {
   if (!allowSubmit) {
     e.preventDefault();

@@ -1,6 +1,6 @@
 function lengthCount() {
   var value = this.getAttribute('value');
-  console.log(value.length);
+  console.log('From JS, input length is ' + value.length);
 }
 
 inputs = document.querySelectorAll('input');
