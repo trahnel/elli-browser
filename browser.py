@@ -9,7 +9,7 @@ import dukpy
 
 def request(url, payload=None):
     scheme, url = url.split("://", 1)
-    assert scheme in ["http", "https"], "Unknown scheme {}".format(scheme)
+    assert scheme in ["http", "https"], f"Unknown scheme {scheme}"
 
     port = 80 if scheme == "http" else 443
 
@@ -28,12 +28,15 @@ def request(url, payload=None):
     if scheme == "https":
         ctx = ssl.create_default_context()
         s = ctx.wrap_socket(s, server_hostname=host)
-    method = "POST" if payload else "GET"
 
+    method = "POST" if payload else "GET"
     body = f'{method} {path} HTTP/1.0\r\nHost: {host}\r\n'
     if payload:
         length = len(payload.encode("utf8"))
         body += f"Content-Length: {length}\r\n"
+    if host in COOKIE_JAR:
+        cookie = COOKIE_JAR[host]
+        body += f'Cookie: {cookie}\r\n'
 
     body += "\r\n" + (payload or "")
 
@@ -45,7 +48,7 @@ def request(url, payload=None):
     statusline = response.readline()
 
     version, status, explanation = statusline.split(" ", 2)
-    assert status == "200", "{}: {}".format(status, explanation)
+    assert status == "200", f"{status}: {explanation}"
 
     headers = {}
     while True:
@@ -54,6 +57,9 @@ def request(url, payload=None):
             break
         header, value = line.split(":", 1)
         headers[header.lower()] = value.strip()
+
+    if 'set-cookie' in headers:
+        COOKIE_JAR[host] = headers['set-cookie']
 
     body = response.read()
     s.close()
@@ -803,6 +809,7 @@ class JSContext:
 
 
 CHROME_PX = 100
+COOKIE_JAR = {}
 
 
 class Tab:

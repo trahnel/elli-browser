@@ -28,3 +28,7 @@ button {
   font-style: normal;
   background-color: orange;
 }
+h1 {
+  font-size: 40px;
+  font-weight: bold;
+}
