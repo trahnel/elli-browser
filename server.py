@@ -167,7 +167,7 @@ def handle_connection(conx):
     length = len(body.encode("utf8"))
     response += f'Content-Length: {length}\r\n'
     if 'cookie' not in headers:
-        response += f'Set-Cookie: token={token}\r\n'
+        response += f'Set-Cookie: token={token}; SameSite=Lax\r\n'
 
     response += f'\r\n{body}'
 

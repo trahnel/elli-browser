@@ -8,7 +8,7 @@ from wsgiref import headers
 import dukpy
 
 
-def request(url, payload=None):
+def request(url, top_level_url, payload=None):
     scheme, url = url.split("://", 1)
     assert scheme in ["http", "https"], f"Unknown scheme {scheme}"
 
@@ -36,8 +36,14 @@ def request(url, payload=None):
         length = len(payload.encode("utf8"))
         body += f"Content-Length: {length}\r\n"
     if host in COOKIE_JAR:
-        cookie = COOKIE_JAR[host]
-        body += f'Cookie: {cookie}\r\n'
+        cookie, params = COOKIE_JAR[host]
+        allow_cookie = True
+
+        if top_level_url and params.get("samesite", "none") == "lax":
+            _, _, top_level_host, _ = top_level_url.split("/", 3)
+            allow_cookie = (host == top_level_host or method == "GET")
+        if allow_cookie:
+            body += f'Cookie: {cookie}\r\n'
 
     body += "\r\n" + (payload or "")
 
@@ -60,7 +66,15 @@ def request(url, payload=None):
         headers[header.lower()] = value.strip()
 
     if 'set-cookie' in headers:
-        COOKIE_JAR[host] = headers['set-cookie']
+        params = {}
+        if ';' in headers['set-cookie']:
+            cookie, rest = headers["set-cookie"].split(';', 1)
+            for param_pair in rest.split(';'):
+                name, value = param_pair.strip().split("=", 1)
+                params[name.lower()] = value.lower()
+        else:
+            cookie = headers["set-cookie"]
+        COOKIE_JAR[host] = (cookie, params)
 
     body = response.read()
     s.close()
@@ -820,7 +834,7 @@ class JSContext:
         if url_origin(full_url) != url_origin(self.tab.url):
             raise Exception('Cross-Origin XHR request not allowed')
 
-        headers, out = request(full_url, payload=body)
+        headers, out = request(full_url, self.tab.url, payload=body)
         return out
 
 
@@ -839,11 +853,11 @@ class Tab:
         self.focus = None
 
     def load(self, url, body=None):
+        # Request
+        headers, body = request(url, self.url, body)
+
         self.history.append(url)
         self.url = url
-
-        # Request
-        headers, body = request(url, body)
 
         # DOM tree
         self.nodes = HTMLParser(body).parse()
@@ -862,7 +876,8 @@ class Tab:
                  and node.attributes.get("rel") == "stylesheet"]
         for link in links:
             try:
-                header, body = request(resolve_url(link, url))
+                style_url = resolve_url(link, url)
+                header, body = request(style_url, url)
             except:
                 continue
             self.rules.extend(CSSParser(body).parse())
@@ -875,7 +890,8 @@ class Tab:
 
         self.js = JSContext(self)
         for script in scripts:
-            header, body = request(resolve_url(script, url))
+            script_url = resolve_url(script, url)
+            header, body = request(script_url, url)
             try:
                 self.js.run(body)
             except dukpy.JSRuntimeError as e:
