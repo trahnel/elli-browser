@@ -210,17 +210,22 @@ class HTMLParser:
         return self.finish()
 
     def get_attributes(self, text: str):
-        parts = text.split()
+        parts = [part.strip() for part in text.split(" ", 1)]
         tag = parts[0].lower()
+
         attributes = {}
-        for attrpair in parts[1:]:
-            if "=" in attrpair:
-                key, value = attrpair.split("=", 1)
-                if len(value) > 2 and value[0] in ["'", "\""]:
-                    value = value[1:-1]
-                attributes[key.lower()] = value
-            else:
-                attributes[attrpair.lower()] = ''
+        if (len(parts) > 1):
+            words = parts[1].split('"')
+            attrs = ['"'.join(words[i:i+2]).strip() +
+                     '"' for i in range(0, len(words)-1, 2)]
+            for attrpair in attrs:
+                if "=" in attrpair:
+                    key, value = attrpair.split("=", 1)
+                    if len(value) > 2 and value[0] in ["'", "\""]:
+                        value = value[1:-1]
+                    attributes[key.lower()] = value
+                else:
+                    attributes[attrpair.lower()] = ''
         return tag, attributes
 
     def add_text(self, text):
