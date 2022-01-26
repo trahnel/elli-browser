@@ -413,9 +413,8 @@ class TextLayout:
         weight = self.node.style["font-weight"]
         style = self.node.style["font-style"]
         if style == 'normal':
-            style = "roman"  # Translate CSS "normal" to Tk "roman"
-        # Translate CSS pixels to Tk points
-        size = (int(float(self.node.style["font-size"][:-2]) * .75))
+            style = "roman"
+        size = float(self.node.style["font-size"][:-2])
         self.font = get_font(size, weight, style)
 
         self.width = self.font.measureText(self.word)
@@ -451,9 +450,8 @@ class InputLayout:
         weight = self.node.style["font-weight"]
         style = self.node.style["font-style"]
         if style == 'normal':
-            style = "roman"  # Translate CSS "normal" to Tk "roman"
-        # Translate CSS pixels to Tk points
-        size = (int(float(self.node.style["font-size"][:-2]) * .75))
+            style = "roman"
+        size = float(self.node.style["font-size"][:-2])
         self.font = get_font(size, weight, style)
 
         self.width = INPUT_WIDTH_PX
@@ -550,9 +548,8 @@ class InlineLayout:
         weight = node.style["font-weight"]
         style = node.style["font-style"]
         if style == 'normal':
-            style = "roman"  # Translate CSS "normal" to Tk "roman"
-        # Translate CSS pixels to Tk points
-        size = (int(float(node.style["font-size"][:-2]) * .75))
+            style = "roman"
+        size = float(node.style["font-size"][:-2])
         font = get_font(size, weight, style)
         for word in node.text.split():
             w = font.measureText(word)
