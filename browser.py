@@ -467,9 +467,10 @@ class InputLayout:
 
     def paint(self, display_list):
         bgcolor = self.node.style.get("background-color", "transparent")
-        if(bgcolor != "transparent"):
+        if bgcolor != "transparent":
             x2, y2 = self.x + self.width, self.y + self.height
-            rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
+            radius = float(self.node.style.get("border-radius", "0px")[:-2])
+            rect = DrawRRect(self.x, self.y, x2, y2, radius, bgcolor)
             display_list.append(rect)
 
         if self.node.tag == "input":
@@ -565,9 +566,11 @@ class InlineLayout:
 
     def paint(self, display_list):
         bgcolor = self.node.style.get("background-color", "transparent")
-        if bgcolor != 'transparent':
+
+        if bgcolor != "transparent":
+            radius = float(self.node.style.get("border-radius", "0px")[:-2])
             x2, y2 = self.x + self.width, self.y + self.height
-            rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
+            rect = DrawRRect(self.x, self.y, x2, y2, radius, bgcolor)
             display_list.append(rect)
         # for x, y, word, font, color in self.display_list:
         #     display_list.append(DrawText(x, y, word, font, color))
@@ -651,6 +654,12 @@ class BlockLayout:
         self.height = sum([child.height for child in self.children])
 
     def paint(self, display_list):
+        bgcolor = self.node.style.get("background-color", "transparent")
+        if bgcolor != "transparent":
+            radius = float(self.node.style.get("border-radius", "0px")[:-2])
+            display_list.append(DrawRRect(
+                self.x, self.y, self.x + self.width, self.y + self.height, radius, bgcolor))
+
         for child in self.children:
             child.paint(display_list)
 
@@ -720,6 +729,23 @@ class DrawRect:
                   self.color,
                   width=0,
                   )
+
+
+class DrawRRect:
+    def __init__(self, x1, y1, x2, y2, radius, color):
+        self.top = y1
+        self.bottom = y2
+        self.left = x1
+        self.right = x2
+        self.radius = radius
+        self.color = color
+
+    def execute(self, scroll, canvas):
+        sk_color = parse_color(self.color)
+        rect = skia.Rect.MakeLTRB(
+            self.left, self.top - scroll, self.right, self.bottom - scroll)
+        rrect = skia.RRect.MakeRectXY(rect, self.radius, self.radius)
+        canvas.drawRRect(rrect, paint=skia.Paint(Color=sk_color))
 
 
 def resolve_url(url: str, current: str):
@@ -834,8 +860,7 @@ class CSSParser:
         return rules
 
 
-EVENT_DISPATCH_CODE = \
-    "new Node(dukpy.handle).dispatchEvent(new Event(dukpy.type))"
+EVENT_DISPATCH_CODE = "new Node(dukpy.handle).dispatchEvent(new Event(dukpy.type))"
 
 
 def url_origin(url):
