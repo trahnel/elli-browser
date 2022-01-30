@@ -155,9 +155,19 @@ def draw_rect(canvas, l, t, r, b, fill=None, width=1):
 def paint_visual_effects(node, cmds, rect):
     blend_mode = parse_blend_mode(node.style.get("mix-blend-mode"))
     opacity = float(node.style.get("opacity", 1.0))
+
+    if node.style.get("overflow", "visible") == "clip":
+        border_radius = float(node.style.get("border-radius", "0px")[:-2])
+        clip_radius = border_radius
+    else:
+        clip_radius = 0
+
     return [
         SaveLayer(skia.Paint(BlendMode=blend_mode), [
             SaveLayer(skia.Paint(Alphaf=opacity), cmds),
+            SaveLayer(skia.Paint(BlendMode=skia.kDstIn), [
+                DrawRRect(rect, clip_radius, "white")
+            ])
         ]),
     ]
 
