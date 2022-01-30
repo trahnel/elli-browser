@@ -152,6 +152,13 @@ def draw_rect(canvas, l, t, r, b, fill=None, width=1):
     canvas.drawRect(rect, paint)
 
 
+def paint_visual_effects(node, cmds, rect):
+    opacity = float(node.style.get("opacity", 1.0))
+    return [
+        SaveLayer(skia.Paint(Alphaf=opacity), cmds)
+    ]
+
+
 def linespace(font):
     metrics = font.getMetrics()
     return metrics.fDescent - metrics.fAscent
@@ -464,12 +471,13 @@ class InputLayout:
         self.height = linespace(self.font)
 
     def paint(self, display_list):
+        cmds = []
+        rect = skia.Rect.MakeLTRB(
+            self.x, self.y, self.x + self.width, self.y + self.height)
         bgcolor = self.node.style.get("background-color", "transparent")
         if bgcolor != "transparent":
-            x2, y2 = self.x + self.width, self.y + self.height
             radius = float(self.node.style.get("border-radius", "0px")[:-2])
-            rect = DrawRRect(self.x, self.y, x2, y2, radius, bgcolor)
-            display_list.append(rect)
+            cmds.append(DrawRRect(rect, radius, bgcolor))
 
         if self.node.tag == "input":
             text = self.node.attributes.get("value", "")
@@ -477,7 +485,10 @@ class InputLayout:
             text = self.node.children[0].text
 
         color = self.node.style["color"]
-        display_list.append(DrawText(self.x, self.y, text, self.font, color))
+        cmds.append(DrawText(self.x, self.y, text, self.font, color))
+
+        cmds = paint_visual_effects(self.node, cmds, rect)
+        display_list.extend(cmds)
 
     def __repr__(self):
         return "InputLayout(x={}, y={}, width={}, height={}, font={}, word={}".format(
@@ -562,17 +573,18 @@ class InlineLayout:
             self.cursor_x += w + font.measureText(" ")
 
     def paint(self, display_list):
+        cmds = []
         bgcolor = self.node.style.get("background-color", "transparent")
-
+        rect = skia.Rect.MakeLTRB(
+            self.x, self.y, self.x + self.width, self.y + self.height)
         if bgcolor != "transparent":
             radius = float(self.node.style.get("border-radius", "0px")[:-2])
-            x2, y2 = self.x + self.width, self.y + self.height
-            rect = DrawRRect(self.x, self.y, x2, y2, radius, bgcolor)
-            display_list.append(rect)
-        # for x, y, word, font, color in self.display_list:
-        #     display_list.append(DrawText(x, y, word, font, color))
+            cmds.append(DrawRRect(rect, radius, bgcolor))
         for child in self.children:
-            child.paint(display_list)
+            child.paint(cmds)
+
+        cmds = paint_visual_effects(self.node, cmds, rect)
+        display_list.extend(cmds)
 
     def __repr__(self):
         return "InlineLayout(x={}, y={}, width={}, height={})".format(
@@ -651,14 +663,19 @@ class BlockLayout:
         self.height = sum([child.height for child in self.children])
 
     def paint(self, display_list):
+        cmds = []
+        rect = skia.Rect.MakeLTRB(
+            self.x, self.y, self.x + self.width, self.y + self.height)
         bgcolor = self.node.style.get("background-color", "transparent")
         if bgcolor != "transparent":
             radius = float(self.node.style.get("border-radius", "0px")[:-2])
-            display_list.append(DrawRRect(
-                self.x, self.y, self.x + self.width, self.y + self.height, radius, bgcolor))
+            cmds.append(DrawRRect(rect, radius, bgcolor))
 
         for child in self.children:
-            child.paint(display_list)
+            child.paint(cmds)
+
+        cmds = paint_visual_effects(self.node, cmds, rect)
+        display_list.extend(cmds)
 
     def __repr__(self):
         return "BlockLayout(x={}, y={}, width={}, height={})".format(
@@ -728,21 +745,31 @@ class DrawRect:
                   )
 
 
+class SaveLayer:
+    def __init__(self, sk_paint, cmds):
+        self.sk_paint = sk_paint
+        self.cmds = cmds
+        self.rect = skia.Rect.MakeEmpty()
+        for cmd in self.cmds:
+            self.rect.join(cmd.rect)
+
+    def execute(self, scroll, canvas):
+        canvas.saveLayer(paint=self.sk_paint)
+        for cmd in self.cmds:
+            cmd.execute(scroll, canvas)
+        canvas.restore()
+
+
 class DrawRRect:
-    def __init__(self, x1, y1, x2, y2, radius, color):
-        self.top = y1
-        self.bottom = y2
-        self.left = x1
-        self.right = x2
-        self.radius = radius
+    def __init__(self, rect, radius, color):
+        self.rect = rect
+        self.rrect = skia.RRect.MakeRectXY(rect, radius, radius)
         self.color = color
 
     def execute(self, scroll, canvas):
         sk_color = parse_color(self.color)
-        rect = skia.Rect.MakeLTRB(
-            self.left, self.top - scroll, self.right, self.bottom - scroll)
-        rrect = skia.RRect.MakeRectXY(rect, self.radius, self.radius)
-        canvas.drawRRect(rrect, paint=skia.Paint(Color=sk_color))
+        rrect_offset = skia.RRect.makeOffset(self.rrect, 0, -scroll)
+        canvas.drawRRect(rrect_offset, paint=skia.Paint(Color=sk_color))
 
 
 def resolve_url(url: str, current: str):
@@ -1021,9 +1048,9 @@ class Tab:
 
     def draw(self, canvas):
         for cmd in self.display_list:
-            if cmd.top > self.scroll + HEIGHT - CHROME_PX:
+            if cmd.rect.fTop > self.scroll + HEIGHT - CHROME_PX:
                 continue
-            if cmd.bottom < self.scroll:
+            if cmd.rect.fBottom < self.scroll:
                 continue
             cmd.execute(self.scroll - CHROME_PX, canvas)
 
