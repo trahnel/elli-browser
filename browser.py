@@ -153,10 +153,21 @@ def draw_rect(canvas, l, t, r, b, fill=None, width=1):
 
 
 def paint_visual_effects(node, cmds, rect):
+    blend_mode = parse_blend_mode(node.style.get("mix-blend-mode"))
     opacity = float(node.style.get("opacity", 1.0))
     return [
-        SaveLayer(skia.Paint(Alphaf=opacity), cmds)
+        SaveLayer(skia.Paint(BlendMode=blend_mode), [
+            SaveLayer(skia.Paint(Alphaf=opacity), cmds),
+        ]),
     ]
+
+
+def parse_blend_mode(blend_mode_str):
+    if blend_mode_str == "multiply":
+        return skia.BlendMode.kMultiply
+    if blend_mode_str == "difference":
+        return skia.BlendMode.kDifference
+    return skia.BlendMode.kSrcOver
 
 
 def linespace(font):
@@ -229,7 +240,7 @@ class HTMLParser:
                 if "=" in attrpair:
                     key, value = attrpair.split("=", 1)
                     if len(value) > 2 and value[0] in ["'", "\""]:
-                        value = value[1:-1]
+                        value = value[1: -1]
                     attributes[key.lower()] = value
                 else:
                     attributes[attrpair.lower()] = ''
