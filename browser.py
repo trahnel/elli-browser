@@ -155,20 +155,21 @@ def draw_rect(canvas, l, t, r, b, fill=None, width=1):
 def paint_visual_effects(node, cmds, rect):
     blend_mode = parse_blend_mode(node.style.get("mix-blend-mode"))
     opacity = float(node.style.get("opacity", 1.0))
+    border_radius = float(node.style.get("border-radius", "0px")[:-2])
 
-    if node.style.get("overflow", "visible") == "clip":
-        border_radius = float(node.style.get("border-radius", "0px")[:-2])
+    needs_clip = node.style.get("overflow", "visible") == "clip"
+    needs_blend_isolation = blend_mode != skia.BlendMode.kSrcOver or \
+        needs_clip or opacity != 1.0
+
+    if needs_clip:
         clip_radius = border_radius
     else:
         clip_radius = 0
 
     return [
-        SaveLayer(skia.Paint(BlendMode=blend_mode), [
-            SaveLayer(skia.Paint(Alphaf=opacity), cmds),
-            SaveLayer(skia.Paint(BlendMode=skia.kDstIn), [
-                DrawRRect(rect, clip_radius, "white")
-            ])
-        ]),
+        SaveLayer(skia.Paint(BlendMode=blend_mode, Alphaf=opacity), [
+            ClipRRect(rect, clip_radius, cmds, should_clip=needs_clip)
+        ], should_save=needs_blend_isolation),
     ]
 
 
@@ -767,7 +768,10 @@ class DrawRect:
 
 
 class SaveLayer:
-    def __init__(self, sk_paint, cmds):
+    def __init__(self, sk_paint, cmds,
+                 should_save=True, should_paint_cmds=True):
+        self.should_save = should_save
+        self.should_paint_cmds = should_paint_cmds
         self.sk_paint = sk_paint
         self.cmds = cmds
         self.rect = skia.Rect.MakeEmpty()
@@ -775,10 +779,33 @@ class SaveLayer:
             self.rect.join(cmd.rect)
 
     def execute(self, scroll, canvas):
-        canvas.saveLayer(paint=self.sk_paint)
+        if self.should_save:
+            canvas.saveLayer(paint=self.sk_paint)
+        if self.should_paint_cmds:
+            for cmd in self.cmds:
+                cmd.execute(scroll, canvas)
+        if self.should_save:
+            canvas.restore()
+
+
+class ClipRRect:
+    def __init__(self, rect, radius, cmds, should_clip=True):
+        self.rect = rect
+        self.rrect = skia.RRect.MakeRectXY(rect, radius, radius)
+        self.cmds = cmds
+        self.should_clip = should_clip
+
+    def execute(self, scroll, canvas):
+        if self.should_clip:
+            canvas.save()
+            rrect_offset = skia.RRect.makeOffset(self.rrect, 0, -scroll)
+            canvas.clipRRect(rrect_offset)
+
         for cmd in self.cmds:
             cmd.execute(scroll, canvas)
-        canvas.restore()
+
+        if self.should_clip:
+            canvas.restore()
 
 
 class DrawRRect:
