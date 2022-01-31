@@ -5,6 +5,7 @@ import dukpy
 import ctypes
 import sdl2
 import skia
+import math
 
 
 def request(url, top_level_url, payload=None):
@@ -738,10 +739,10 @@ class DrawText:
         self.font = font
         self.color = color
 
-    def execute(self, scroll: int, canvas):
+    def execute(self, canvas):
         draw_text(canvas,
                   self.left,
-                  self.top - scroll,
+                  self.top,
                   self.text,
                   self.font,
                   self.color)
@@ -756,12 +757,12 @@ class DrawRect:
         self.rect = skia.Rect.MakeLTRB(x1, y1, x2, y2)
         self.color = color
 
-    def execute(self, scroll, canvas):
+    def execute(self,  canvas):
         draw_rect(canvas,
                   self.left,
-                  self.top - scroll,
+                  self.top,
                   self.right,
-                  self.bottom - scroll,
+                  self.bottom,
                   self.color,
                   width=0,
                   )
@@ -778,12 +779,12 @@ class SaveLayer:
         for cmd in self.cmds:
             self.rect.join(cmd.rect)
 
-    def execute(self, scroll, canvas):
+    def execute(self, canvas):
         if self.should_save:
             canvas.saveLayer(paint=self.sk_paint)
         if self.should_paint_cmds:
             for cmd in self.cmds:
-                cmd.execute(scroll, canvas)
+                cmd.execute(canvas)
         if self.should_save:
             canvas.restore()
 
@@ -795,14 +796,13 @@ class ClipRRect:
         self.cmds = cmds
         self.should_clip = should_clip
 
-    def execute(self, scroll, canvas):
+    def execute(self, canvas):
         if self.should_clip:
             canvas.save()
-            rrect_offset = skia.RRect.makeOffset(self.rrect, 0, -scroll)
-            canvas.clipRRect(rrect_offset)
+            canvas.clipRRect(self.rrect)
 
         for cmd in self.cmds:
-            cmd.execute(scroll, canvas)
+            cmd.execute(canvas)
 
         if self.should_clip:
             canvas.restore()
@@ -814,10 +814,9 @@ class DrawRRect:
         self.rrect = skia.RRect.MakeRectXY(rect, radius, radius)
         self.color = color
 
-    def execute(self, scroll, canvas):
+    def execute(self, canvas):
         sk_color = parse_color(self.color)
-        rrect_offset = skia.RRect.makeOffset(self.rrect, 0, -scroll)
-        canvas.drawRRect(rrect_offset, paint=skia.Paint(Color=sk_color))
+        canvas.drawRRect(self.rrect, paint=skia.Paint(Color=sk_color))
 
 
 def resolve_url(url: str, current: str):
@@ -1096,18 +1095,14 @@ class Tab:
 
     def draw(self, canvas):
         for cmd in self.display_list:
-            if cmd.rect.fTop > self.scroll + HEIGHT - CHROME_PX:
-                continue
-            if cmd.rect.fBottom < self.scroll:
-                continue
-            cmd.execute(self.scroll - CHROME_PX, canvas)
+            cmd.execute(canvas)
 
         if self.focus:
             obj = [obj for obj in tree_to_list(self.document, [])
                    if obj.node == self.focus][0]
             text = self.focus.attributes.get("value", "")
             x = obj.x + obj.font.measureText(text)
-            y = obj.y - self.scroll + CHROME_PX
+            y = obj.y
             draw_line(canvas, x, y, x, y + obj.height)
 
     def scroll_up(self):
@@ -1215,31 +1210,40 @@ class Browser:
             self.BLUE_MASK = 0x00ff0000
             self.ALPHA_MASK = 0xff000000
 
-        self.scroll = 0
-        self.url = None
         self.tabs = []
         self.active_tab = None
 
         self.focus = None
         self.address_bar = ""
 
+        self.chrome_surface = skia.Surface(WIDTH, CHROME_PX)
+        self.tab_surface = None
+
     def load(self, url):
         new_tab = Tab()
         new_tab.load(url)
         self.active_tab = len(self.tabs)
         self.tabs.append(new_tab)
+        self.raster_chrome()
+        self.raster_tab()
         self.draw()
 
-    def draw(self):
-        # Clear all
-        canvas = self.root_surface.getCanvas()
+    def raster_tab(self):
+        active_tab = self.tabs[self.active_tab]
+        tab_height = math.ceil(active_tab.document.height)
+
+        if not self.tab_surface or tab_height != self.tab_surface.height():
+            self.tab_surface = skia.Surface(WIDTH, tab_height)
+
+        canvas = self.tab_surface.getCanvas()
         canvas.clear(skia.ColorWHITE)
 
         # Draw active tab content
-        self.tabs[self.active_tab].draw(canvas)
+        active_tab.draw(canvas)
 
-        # Overwrite any half characters in chrome (tabs + address bar) area
-        draw_rect(canvas, 0, 0, WIDTH, CHROME_PX, fill="white")
+    def raster_chrome(self):
+        canvas = self.chrome_surface.getCanvas()
+        canvas.clear(skia.ColorWHITE)
 
         # Draw tabs
         tabfont = skia.Font(skia.Typeface('Arial'), 20)
@@ -1274,6 +1278,27 @@ class Browser:
         paint = skia.Paint(Color=skia.ColorBLACK, Style=skia.Paint.kFill_Style)
         canvas.drawPath(path, paint)
 
+    def draw(self):
+        # Clear all
+        canvas = self.root_surface.getCanvas()
+        canvas.clear(skia.ColorWHITE)
+
+        # Tab canvas
+        tab_rect = skia.Rect.MakeLTRB(0, CHROME_PX, WIDTH, HEIGHT)
+        tab_offset = CHROME_PX - self.tabs[self.active_tab].scroll
+        canvas.save()
+        canvas.clipRect(tab_rect)
+        canvas.translate(0, tab_offset)
+        self.tab_surface.draw(canvas, 0, 0)
+        canvas.restore()
+
+        # Chrome canvas
+        chrome_rect = skia.Rect.MakeLTRB(0, 0, WIDTH, CHROME_PX)
+        canvas.save()
+        canvas.clipRect(chrome_rect)
+        self.chrome_surface.draw(canvas, 0, 0)
+        canvas.restore()
+
         skia_image = self.root_surface.makeImageSnapshot()
         skia_bytes = skia_image.tobytes()
 
@@ -1297,36 +1322,44 @@ class Browser:
             return
         if self.focus == "address bar":
             self.address_bar += e.char
+            self.raster_tab()
             self.draw()
         elif self.focus == "content":
             self.tabs[self.active_tab].key_press(e.char)
+            self.raster_chrome()
             self.draw()
 
     def handle_up(self):
         self.tabs[self.active_tab].scroll_up()
+        self.raster_tab()
         self.draw()
 
     def handle_down(self):
         self.tabs[self.active_tab].scroll_down()
+        self.raster_tab()
         self.draw()
 
     def handle_enter(self, e):
         if self.focus == "address bar":
             self.tabs[self.active_tab].load(self.address_bar)
             self.focus = None
+            self.raster_chrome()
             self.draw()
 
     def handle_backspace(self, e):
         if self.focus == "address bar":
             self.address_bar = self.address_bar[:-1]
+            self.raster_chrome()
             self.draw()
 
     def handle_scroll_up(self):
         self.tabs[self.active_tab].scroll_up()
+        self.raster_tab()
         self.draw()
 
     def handle_scroll_down(self):
         self.tabs[self.active_tab].scroll_down()
+        self.raster_tab()
         self.draw()
 
     def handle_mouse_wheel(self, e):
@@ -1346,9 +1379,11 @@ class Browser:
             elif 50 <= e.x < WIDTH - 10 and 40 <= e.y < 90:
                 self.focus = "address bar"
                 self.address_bar = ""
+            self.raster_chrome()
         else:
             self.focus = "content"
             self.tabs[self.active_tab].click(e.x, e.y - CHROME_PX)
+            self.raster_tab()
         self.draw()
 
     def handle_quit(self):
