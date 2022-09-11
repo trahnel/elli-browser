@@ -1,11 +1,13 @@
+import ctypes
+import math
 import socket
 import ssl
+import threading
 import urllib.parse
+
 import dukpy
-import ctypes
 import sdl2
 import skia
-import math
 
 
 def request(url, top_level_url, payload=None):
@@ -938,6 +940,8 @@ def url_origin(url):
     scheme_colon, _, host, _ = url.split('/', 3)
     return f'{scheme_colon}//{host}'
 
+SETTIMEOUT_CODE = "__runSetTimeout(dukpy.handle)"
+XHR_ONLOAD_CODE = "__runXHROnload(dukpy.out, dukpy.handle)"
 
 class JSContext:
     def __init__(self, tab) -> None:
@@ -949,6 +953,7 @@ class JSContext:
         self.interp.export_function("innerHTML_set", self.innerHTML_set)
         self.interp.export_function(
             "XMLHttpRequest_send", self.XMLHttpRequest_send)
+        self.interp.export_function("setTimeout", self.setTimeout)
 
         self.node_to_handle = {}
         self.handle_to_node = {}
@@ -984,6 +989,20 @@ class JSContext:
             EVENT_DISPATCH_CODE, type=type, handle=handle)
         return not do_default
 
+    def dispatch_settimeout(self, handle):
+        self.interp.evaljs(SETTIMEOUT_CODE, handle=handle)
+
+    def setTimeout(self, handle, time):
+        def run_callback():
+            task = Task(self.dispatch_settimeout, handle)
+            self.tab.task_runner.schedule_task(task)
+        threading.Time(time / 1000.0, run_callback).start()
+
+    def dispatch_xhr_onload(self, out, handle):
+        do_default = self.interp.evaljs(
+            XHR_ONLOAD_CODE, out=out, handle=handle
+        )
+
     def innerHTML_set(self, handle, s):
         doc = HTMLParser("<html><body>" + s + "</body></html>").parse()
         new_nodes = doc.children[0].children
@@ -992,23 +1011,65 @@ class JSContext:
         elt.children = new_nodes
         for child in elt.children:
             child.parent = elt
-
         self.tab.render()
 
-    def XMLHttpRequest_send(self, method, url, body):
+    def XMLHttpRequest_send(self, method, url, body, isasync, handle):
+        # Resolve URL
         full_url = resolve_url(url, self.tab.url)
+
+        # Security checks
         if not self.tab.allowed_request(full_url):
             raise Exception("Cross-origin XHR blocked by CSP")
         if url_origin(full_url) != url_origin(self.tab.url):
             raise Exception('Cross-Origin XHR request not allowed')
 
-        headers, out = request(full_url, self.tab.url, payload=body)
-        return out
+        # Make request and enqueue a task for running callbacks
+        def run_load():
+            headers, response = request(full_url, self.tab.url, payload=body)
+            task = Task(self.dispatch_xhr_onload, response, handle)
+            self.tab.task_runner.schedule_task(task)
+            if not isasync:
+                return response
+
+        # Call function right away (sync) or in a new thread (async)
+        if not isasync:
+            return run_load()
+        else:
+            threading.Thread(target=run_load).start()
 
 
 CHROME_PX = 100
 COOKIE_JAR = {}
 
+class Task:
+    def __init__(self, task_code, *args):
+        self.task_code = task_code
+        self.args = args
+        self.__name__ = "task"
+
+    def run(self):
+        self.task_code(*self.args)
+        self.task_code = None
+        self.args = None
+
+class TaskRunner:
+    def __init__(self):
+        self.tasks = []
+        self.condition = threading.Condition()
+
+    def schedule_task(self, task):
+        self.condition.acquire(blocking=True)
+        self.tasks.append(task)
+        self.condition.release()
+
+    def run(self):
+        self.condition.acquire(blocking=True)
+        task = None
+        if len(self.tasks) > 0:
+            task = self.tasks.pop(0)
+        self.condition.release()
+        if task:
+            task.run()
 
 class Tab:
     def __init__(self) -> None:
@@ -1018,8 +1079,16 @@ class Tab:
         self.focus = None
         self.url = None
 
+        self.task_runner = TaskRunner()
+
         with open("browser.css") as f:
             self.default_style_sheet = CSSParser(f.read()).parse()
+
+    def run_script(self, url, body):
+        try:
+            print("Script returned: ", self.js.run(body))
+        except dukpy.JSRuntimeError as e:
+            print("Script", url, "crashed", e)
 
     def load(self, url, body=None):
         # Request
@@ -1072,11 +1141,10 @@ class Tab:
             if not self.allowed_request(script_url):
                 print("Blocked script", script, "due to CSP")
                 continue
+            
             header, body = request(script_url, url)
-            try:
-                self.js.run(body)
-            except dukpy.JSRuntimeError as e:
-                print("Script", script, "crashed", e)
+            task = Task(self.run_script, script_url, body)
+            self.task_runner.schedule_task(task)
 
         self.render()
 
@@ -1394,8 +1462,8 @@ if __name__ == "__main__":
     import sys
     sdl2.SDL_Init(sdl2.SDL_INIT_EVENTS)
     browser = Browser()
-    # browser.load(sys.argv[1])
-    browser.load("http://localhost:8000/")
+    browser.load(sys.argv[1])
+    # browser.load("http://localhost:8000/")
 
     event = sdl2.SDL_Event()
     while True:
@@ -1419,3 +1487,5 @@ if __name__ == "__main__":
                     browser.handle_up()
             elif event.type == sdl2.SDL_TEXTINPUT:
                 browser.handle_key(event.text.text.decode('utf8'))
+
+        browser.tabs[browser.active_tab].task_runner.run()
