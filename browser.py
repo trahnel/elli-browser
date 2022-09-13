@@ -1011,7 +1011,7 @@ class JSContext:
         elt.children = new_nodes
         for child in elt.children:
             child.parent = elt
-        self.tab.render()
+        self.tab.set_needs_render()
 
     def XMLHttpRequest_send(self, method, url, body, isasync, handle):
         # Resolve URL
@@ -1072,7 +1072,8 @@ class TaskRunner:
             task.run()
 
 class Tab:
-    def __init__(self) -> None:
+    def __init__(self, browser):
+        self.browser = browser
         self.display_list = []
         self.scroll = 0
         self.history = []
@@ -1080,6 +1081,8 @@ class Tab:
         self.url = None
 
         self.task_runner = TaskRunner()
+
+        self.needs_render = False
 
         with open("browser.css") as f:
             self.default_style_sheet = CSSParser(f.read()).parse()
@@ -1146,9 +1149,13 @@ class Tab:
             task = Task(self.run_script, script_url, body)
             self.task_runner.schedule_task(task)
 
-        self.render()
+        self.set_needs_render()
+
+    def set_needs_render(self):
+        self.needs_render = True
 
     def render(self):
+        if not self.needs_render: return
         # Styling
         style(self.nodes, sorted(self.rules, key=cascade_priority))
 
@@ -1160,6 +1167,9 @@ class Tab:
         # Paint
         self.display_list = []
         self.document.paint(self.display_list)
+
+        self.needs_render = False
+        self.browser.set_needs_raster_and_draw()
 
     def draw(self, canvas):
         for cmd in self.display_list:
@@ -1205,7 +1215,7 @@ class Tab:
                     return
                 self.focus = elt
                 elt.attributes["value"] = ""
-                return self.render()
+                return self.set_needs_render()
             elif elt.tag == 'button':
                 if self.js.dispatch_event("click", elt):
                     return
@@ -1220,7 +1230,7 @@ class Tab:
             if self.js.dispatch_event("keydown", self.focus):
                 return
             self.focus.attributes["value"] += char
-            self.render()
+            self.set_needs_render()
 
     def submit_form(self, elt):
         if self.js.dispatch_event("submit", elt):
@@ -1252,6 +1262,7 @@ class Tab:
         return self.allowed_origins == None or \
             url_origin(url) in self.allowed_origins
 
+REFRESH_RATE_SEC = 0.016 # 16ms
 
 class Browser:
     def __init__(self):
@@ -1287,14 +1298,32 @@ class Browser:
         self.chrome_surface = skia.Surface(WIDTH, CHROME_PX)
         self.tab_surface = None
 
+        self.needs_raster_and_draw = False
+
     def load(self, url):
-        new_tab = Tab()
+        new_tab = Tab(self)
         new_tab.load(url)
         self.active_tab = len(self.tabs)
         self.tabs.append(new_tab)
+
+    def schedule_animation_frame(self):
+        def callback():
+            active_tab = self.tabs[self.active_tab]
+            task = Task(active_tab.render)
+            active_tab.task_runner.schedule_task(task)
+        threading.Timer(REFRESH_RATE_SEC, callback).start()
+
+    def set_needs_raster_and_draw(self):
+        self.needs_raster_and_draw = True
+
+    def raster_and_draw(self):
+        if not self.needs_raster_and_draw: return
+                    
         self.raster_chrome()
         self.raster_tab()
         self.draw()
+
+        self.needs_raster_and_draw = False
 
     def raster_tab(self):
         active_tab = self.tabs[self.active_tab]
@@ -1390,8 +1419,7 @@ class Browser:
             return
         if self.focus == "address bar":
             self.address_bar += e.char
-            self.raster_tab()
-            self.draw()
+            self.set_needs_raster_and_draw()
         elif self.focus == "content":
             self.tabs[self.active_tab].key_press(e.char)
             self.raster_chrome()
@@ -1411,14 +1439,12 @@ class Browser:
         if self.focus == "address bar":
             self.tabs[self.active_tab].load(self.address_bar)
             self.focus = None
-            self.raster_chrome()
-            self.draw()
+            self.set_needs_raster_and_draw()
 
     def handle_backspace(self, e):
         if self.focus == "address bar":
             self.address_bar = self.address_bar[:-1]
-            self.raster_chrome()
-            self.draw()
+            self.set_needs_raster_and_draw()
 
     def handle_scroll_up(self):
         self.tabs[self.active_tab].scroll_up()
@@ -1447,7 +1473,7 @@ class Browser:
             elif 50 <= e.x < WIDTH - 10 and 40 <= e.y < 90:
                 self.focus = "address bar"
                 self.address_bar = ""
-            self.raster_chrome()
+            self.set_needs_raster_and_draw()
         else:
             self.focus = "content"
             self.tabs[self.active_tab].click(e.x, e.y - CHROME_PX)
@@ -1489,3 +1515,6 @@ if __name__ == "__main__":
                 browser.handle_key(event.text.text.decode('utf8'))
 
         browser.tabs[browser.active_tab].task_runner.run()
+        browser.raster_and_draw()
+        browser.schedule_animation_frame()
+        
