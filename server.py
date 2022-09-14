@@ -1,9 +1,8 @@
+import html
 import random
+import socket
 import urllib.parse
 from datetime import datetime
-import socket
-import html
-
 
 ENTRIES = [('Tomte was here', 'santa'),
            ("No names. We are nameless!", "cerealkiller"),
@@ -108,6 +107,9 @@ def do_request(session, method, url, headers, body):
     if method == "GET" and url == "/":
         return "200 OK", show_comments(session)
 
+    if method == "GET" and url == "/count":
+        return "200 OK", show_count()
+
     if method == "POST" and url == "/":
         params = form_decode(body)
         return do_login(session, params)
@@ -119,6 +121,10 @@ def do_request(session, method, url, headers, body):
         with open("comment.js") as f:
             return "200 OK", f.read()
 
+    elif method == "GET" and url == "/eventloop.js":
+        with open("eventloop.js") as f:
+            return "200 OK", f.read()
+
     if method == "POST" and url == "/add":
         params = form_decode(body)
         add_entry(session, params)
@@ -126,6 +132,14 @@ def do_request(session, method, url, headers, body):
 
     return "404 Not Found", not_found(url, method)
 
+def show_count():
+    out = "<!doctype html>"
+    out += "<div>"
+    out += "  Let's count up to 99!"
+    out += "</div>"
+    out += "<div>Output</div>"
+    out += "<script src=/eventloop.js></script>"
+    return out
 
 def log_request(method, url, status):
     # [24/Jan/2022 12:54:18] "POST /submit HTTP/1.0" 501 -

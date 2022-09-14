@@ -92,6 +92,7 @@ function __runXHROnload(body, handle) {
 }
 
 SET_TIMEOUT_REQUESTS = {};
+
 function setTimeout(callback, time_delta) {
   var handle = Object.keys(SET_TIMEOUT_REQUESTS).length;
   SET_TIMEOUT_REQUESTS[handle] = callback;
@@ -103,4 +104,17 @@ function __runSetTimeout(handle) {
   callback();
 }
 
-XHR_REQUESTS = {};
+RAF_LISTENERS = [];
+
+function requestAnimationFrame(fn) {
+  RAF_LISTENERS.push(fn);
+  call_python('requestAnimationFrame');
+}
+
+function __runRAFHandlers() {
+  var handlers_copy = RAF_LISTENERS;
+  RAF_LISTENERS = [];
+  for (var i = 0; i < handlers_copy.length; i++) {
+    handlers_copy[i]();
+  }
+}
