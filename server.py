@@ -121,8 +121,15 @@ def do_request(session, method, url, headers, body):
         with open("comment.js") as f:
             return "200 OK", f.read()
 
-    elif method == "GET" and url == "/eventloop.js":
+    if method == "GET" and url == "/eventloop.js":
         with open("eventloop.js") as f:
+            return "200 OK", f.read()
+
+    if method == "GET" and url == "/opacity":
+        return "200 OK", opacity()
+
+    if method == "GET" and url == "/example13-opacity-raf.js":
+        with open("example13-opacity-raf.js") as f:
             return "200 OK", f.read()
 
     if method == "POST" and url == "/add":
@@ -131,6 +138,13 @@ def do_request(session, method, url, headers, body):
         return "200 OK", show_comments(session)
 
     return "404 Not Found", not_found(url, method)
+
+def opacity():
+    out = "<button>Fade out</button>"
+    out += "<button>Fade in</button>"
+    out += "<div>This text fades</div>"
+    out += "<script src=example13-opacity-raf.js></script>"
+    return out
 
 def show_count():
     out = "<!doctype html>"

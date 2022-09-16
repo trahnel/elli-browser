@@ -7,6 +7,7 @@ import time
 import urllib.parse
 
 import dukpy
+import OpenGL.GL as GL
 import sdl2
 import skia
 
@@ -979,6 +980,7 @@ class JSContext:
         self.interp.export_function("querySelectorAll", self.querySelectorAll)
         self.interp.export_function("getAttribute", self.getAttribute)
         self.interp.export_function("innerHTML_set", self.innerHTML_set)
+        self.interp.export_function("style_set", self.style_set)
         self.interp.export_function(
             "XMLHttpRequest_send", self.XMLHttpRequest_send)
         self.interp.export_function("setTimeout", self.setTimeout)
@@ -1046,6 +1048,11 @@ class JSContext:
         elt.children = new_nodes
         for child in elt.children:
             child.parent = elt
+        self.tab.set_needs_render()
+
+    def style_set(self, handle, s):
+        elt = self.handle_to_node[handle]
+        elt.attributes["style"] = s
         self.tab.set_needs_render()
 
     def XMLHttpRequest_send(self, method, url, body, isasync, handle):
@@ -1364,19 +1371,56 @@ class Tab:
 
 REFRESH_RATE_SEC = 0.016 # 16ms
 
+USE_GPU = True
 class Browser:
     def __init__(self):
-        self.sdl_window = sdl2.SDL_CreateWindow(
-            b"Browser", sdl2.SDL_WINDOWPOS_CENTERED,
-            sdl2.SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, sdl2.SDL_WINDOW_SHOWN)
-
-        self.root_surface = skia.Surface.MakeRaster(
-            skia.ImageInfo.Make(
+        if USE_GPU:
+            self.sdl_window = sdl2.SDL_CreateWindow(b"Browser",
+                sdl2.SDL_WINDOWPOS_CENTERED,
+                sdl2.SDL_WINDOWPOS_CENTERED,
                 WIDTH, HEIGHT,
-                ct=skia.kRGBA_8888_ColorType,
-                at=skia.kUnpremul_AlphaType
+                sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_OPENGL
             )
-        )
+            self.gl_context = sdl2.SDL_GL_CreateContext(
+                self.sdl_window
+            )
+            print(("OpenGL initialized: vendor={}, renderer={}")
+                .format(
+                    GL.glGetString(GL.GL_VENDOR),
+                    GL.glGetString(GL.GL_RENDERER)
+                ))
+
+            self.skia_context = skia.GrDirectContext.MakeGL()
+
+            self.root_surface = skia.Surface.MakeFromBackendRenderTarget(
+                self.skia_context,
+                skia.GrBackendRenderTarget(
+                    WIDTH, HEIGHT, 0, 0,
+                    skia.GrGLFramebufferInfo(0, GL.GL_RGBA8)
+                ),
+                skia.kBottomLeft_GrSurfaceOrigin,
+                skia.kRGBA_8888_ColorType,
+                skia.ColorSpace.MakeSRGB()
+            )
+            assert self.root_surface is not None
+
+            self.chrome_surface = skia.Surface.MakeRenderTarget(
+                self.skia_context, skia.Budgeted.kNo,
+                skia.ImageInfo.MakeN32Premul(WIDTH, CHROME_PX))
+            assert self.chrome_surface is not None
+        else:
+            self.sdl_window = sdl2.SDL_CreateWindow(
+                b"Browser", sdl2.SDL_WINDOWPOS_CENTERED,
+                sdl2.SDL_WINDOWPOS_CENTERED, WIDTH, HEIGHT, sdl2.SDL_WINDOW_SHOWN)
+
+            self.root_surface = skia.Surface.MakeRaster(
+                skia.ImageInfo.Make(
+                    WIDTH, HEIGHT,
+                    ct=skia.kRGBA_8888_ColorType,
+                    at=skia.kUnpremul_AlphaType
+                )
+            )
+            self.chrome_surface = skia.Surface(WIDTH, CHROME_PX)
 
         self.tabs: list[Tab] = []
         self.active_tab: int = None
@@ -1384,7 +1428,6 @@ class Browser:
         self.focus = None
         self.address_bar = ""
 
-        self.chrome_surface = skia.Surface(WIDTH, CHROME_PX)
         self.tab_surface = None
         
         self.animation_timer = None
@@ -1476,7 +1519,13 @@ class Browser:
         tab_height = math.ceil(active_tab.document.height)
 
         if not self.tab_surface or tab_height != self.tab_surface.height():
-            self.tab_surface = skia.Surface(WIDTH, tab_height)
+            if USE_GPU:
+                self.tab_surface = skia.Surface.MakeRenderTarget(
+                    self.skia_context, skia.Budgeted.kNo,
+                    skia.ImageInfo.MakeN32Premul(WIDTH, tab_height))
+                assert self.tab_surface is not None
+            else:
+                self.tab_surface = skia.Surface(WIDTH, tab_height)
 
         canvas = self.tab_surface.getCanvas()
         canvas.clear(skia.ColorWHITE)
@@ -1542,21 +1591,27 @@ class Browser:
         self.chrome_surface.draw(canvas, 0, 0)
         canvas.restore()
 
-        skia_image = self.root_surface.makeImageSnapshot()
-        skia_bytes = skia_image.tobytes()
+        if USE_GPU:
+            self.root_surface.flushAndSubmit()
+            sdl2.SDL_GL_SwapWindow(self.sdl_window)
+        else:
+            # This makes an image interface to the Skia surface, but
+            # doesn't actually copy anything yet.
+            skia_image = self.root_surface.makeImageSnapshot()
+            skia_bytes = skia_image.tobytes()
 
-        depth = 32  # Bits per pixel
-        pitch = 4 * WIDTH  # Bytes per row
-        sdl_surface = sdl2.SDL_CreateRGBSurfaceFrom(
-            skia_bytes, WIDTH, HEIGHT, depth, pitch,
-            self.RED_MASK, self.GREEN_MASK, self.BLUE_MASK, self.ALPHA_MASK
-        )
+            depth = 32  # Bits per pixel
+            pitch = 4 * WIDTH  # Bytes per row
+            sdl_surface = sdl2.SDL_CreateRGBSurfaceFrom(
+                skia_bytes, WIDTH, HEIGHT, depth, pitch,
+                self.RED_MASK, self.GREEN_MASK, self.BLUE_MASK, self.ALPHA_MASK
+            )
 
-        rect = sdl2.SDL_Rect(0, 0, WIDTH, HEIGHT)
-        window_surface = sdl2.SDL_GetWindowSurface(self.sdl_window)
-        # SDL_BlitSurface does the actual copy
-        sdl2.SDL_BlitSurface(sdl_surface, rect, window_surface, rect)
-        sdl2.SDL_UpdateWindowSurface(self.sdl_window)
+            rect = sdl2.SDL_Rect(0, 0, WIDTH, HEIGHT)
+            window_surface = sdl2.SDL_GetWindowSurface(self.sdl_window)
+            # SDL_BlitSurface does the actual copy
+            sdl2.SDL_BlitSurface(sdl_surface, rect, window_surface, rect)
+            sdl2.SDL_UpdateWindowSurface(self.sdl_window)
 
     def commit(self, tab, data):
         self.lock.acquire(blocking=True)
@@ -1652,6 +1707,8 @@ class Browser:
     def handle_quit(self):
         print(self.measure_raster_and_draw.text())
         self.tabs[self.active_tab].task_runner.set_needs_quit()
+        if USE_GPU:
+            sdl2.SDL_GL_DeleteContext(self.gl_context)
         sdl2.SDL_DestroyWindow(self.sdl_window)
 
 
