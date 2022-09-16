@@ -139,12 +139,14 @@ def do_request(session, method, url, headers, body):
 
     return "404 Not Found", not_found(url, method)
 
+
 def opacity():
     out = "<button>Fade out</button>"
     out += "<button>Fade in</button>"
     out += "<div>This text fades</div>"
     out += "<script src=example13-opacity-raf.js></script>"
     return out
+
 
 def show_count():
     out = "<!doctype html>"
@@ -154,6 +156,7 @@ def show_count():
     out += "<div>Output</div>"
     out += "<script src=/eventloop.js></script>"
     return out
+
 
 def log_request(method, url, status):
     # [24/Jan/2022 12:54:18] "POST /submit HTTP/1.0" 501 -

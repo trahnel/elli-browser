@@ -190,6 +190,7 @@ def linespace(font):
     metrics = font.getMetrics()
     return metrics.fDescent - metrics.fAscent
 
+
 class MeasureTime:
     def __init__(self, name):
         self.name = name
@@ -206,9 +207,11 @@ class MeasureTime:
         self.start_time = None
 
     def text(self):
-        if self.count == 0: return ""
+        if self.count == 0:
+            return ""
         avg = self.total_s / self.count
         return "Time in {} on average: {:>.0f}ms".format(self.name, avg * 1000)
+
 
 class Text:
     def __init__(self, text, parent):
@@ -786,6 +789,7 @@ class DrawRect:
                   width=0,
                   )
 
+
 class DrawLine:
     def __init__(self, x1, y1, x2, y2):
         self.rect = skia.Rect.MakeLTRB(x1, y1, x2, y2)
@@ -796,7 +800,7 @@ class DrawLine:
 
     def execute(self, canvas):
         draw_line(canvas, self.x1, self.y1, self.x2, self.y2)
-    
+
 
 class SaveLayer:
     def __init__(self, sk_paint, cmds,
@@ -968,8 +972,10 @@ def url_origin(url):
     scheme_colon, _, host, _ = url.split('/', 3)
     return f'{scheme_colon}//{host}'
 
+
 SETTIMEOUT_CODE = "__runSetTimeout(dukpy.handle)"
 XHR_ONLOAD_CODE = "__runXHROnload(dukpy.out, dukpy.handle)"
+
 
 class JSContext:
     def __init__(self, tab):
@@ -984,7 +990,8 @@ class JSContext:
         self.interp.export_function(
             "XMLHttpRequest_send", self.XMLHttpRequest_send)
         self.interp.export_function("setTimeout", self.setTimeout)
-        self.interp.export_function("requestAnimationFrame", self.requestAnimationFrame)
+        self.interp.export_function(
+            "requestAnimationFrame", self.requestAnimationFrame)
 
         self.node_to_handle = {}
         self.handle_to_node = {}
@@ -1083,6 +1090,7 @@ class JSContext:
 CHROME_PX = 100
 COOKIE_JAR = {}
 
+
 class Task:
     def __init__(self, task_code, *args):
         self.task_code = task_code
@@ -1093,6 +1101,7 @@ class Task:
         self.task_code(*self.args)
         self.task_code = None
         self.args = None
+
 
 class TaskRunner:
     def __init__(self, tab):
@@ -1125,7 +1134,7 @@ class TaskRunner:
             if needs_quit:
                 self.handle_quit()
                 return
-            
+
             task = None
             self.condition.acquire(blocking=True)
             if len(self.tasks) > 0:
@@ -1142,6 +1151,7 @@ class TaskRunner:
     def handle_quit(self):
         print(self.tab.measure_render.text())
 
+
 class CommitForRaster:
     def __init__(self, url, scroll, height, display_list):
         self.url = url
@@ -1149,8 +1159,10 @@ class CommitForRaster:
         self.height = height
         self.display_list = display_list
 
+
 def clamp_scroll(scroll, tab_height):
     return max(0, min(scroll, tab_height - (HEIGHT - CHROME_PX)))
+
 
 class Tab:
     def __init__(self, browser):
@@ -1174,7 +1186,7 @@ class Tab:
     def run_animation_frame(self, scroll):
         if not self.scroll_changed_in_tab:
             self.scroll = scroll
-        
+
         self.js.interp.evaljs("__runRAFHandlers()")
 
         self.render()
@@ -1252,7 +1264,7 @@ class Tab:
             if not self.allowed_request(script_url):
                 print("Blocked script", script, "due to CSP")
                 continue
-            
+
             header, body = request(script_url, url)
             task = Task(self.js.run, script_url, body)
             self.task_runner.schedule_task(task)
@@ -1263,7 +1275,8 @@ class Tab:
         self.needs_render = True
 
     def render(self):
-        if not self.needs_render: return
+        if not self.needs_render:
+            return
         self.measure_render.start()
 
         # Styling
@@ -1369,26 +1382,29 @@ class Tab:
         return self.allowed_origins == None or \
             url_origin(url) in self.allowed_origins
 
-REFRESH_RATE_SEC = 0.016 # 16ms
+
+REFRESH_RATE_SEC = 0.016  # 16ms
 
 USE_GPU = True
+
+
 class Browser:
     def __init__(self):
         if USE_GPU:
             self.sdl_window = sdl2.SDL_CreateWindow(b"Browser",
-                sdl2.SDL_WINDOWPOS_CENTERED,
-                sdl2.SDL_WINDOWPOS_CENTERED,
-                WIDTH, HEIGHT,
-                sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_OPENGL
-            )
+                                                    sdl2.SDL_WINDOWPOS_CENTERED,
+                                                    sdl2.SDL_WINDOWPOS_CENTERED,
+                                                    WIDTH, HEIGHT,
+                                                    sdl2.SDL_WINDOW_SHOWN | sdl2.SDL_WINDOW_OPENGL
+                                                    )
             self.gl_context = sdl2.SDL_GL_CreateContext(
                 self.sdl_window
             )
             print(("OpenGL initialized: vendor={}, renderer={}")
-                .format(
-                    GL.glGetString(GL.GL_VENDOR),
-                    GL.glGetString(GL.GL_RENDERER)
-                ))
+                  .format(
+                GL.glGetString(GL.GL_VENDOR),
+                GL.glGetString(GL.GL_RENDERER)
+            ))
 
             self.skia_context = skia.GrDirectContext.MakeGL()
 
@@ -1429,7 +1445,7 @@ class Browser:
         self.address_bar = ""
 
         self.tab_surface = None
-        
+
         self.animation_timer = None
         self.needs_raster_and_draw = False
         self.needs_animation_frame = False
@@ -1504,7 +1520,7 @@ class Browser:
         if not self.needs_raster_and_draw:
             self.lock.release()
             return
-                    
+
         self.measure_raster_and_draw.start()
         self.raster_chrome()
         self.raster_tab()
@@ -1522,7 +1538,10 @@ class Browser:
             if USE_GPU:
                 self.tab_surface = skia.Surface.MakeRenderTarget(
                     self.skia_context, skia.Budgeted.kNo,
-                    skia.ImageInfo.MakeN32Premul(WIDTH, tab_height))
+                    skia.ImageInfo.MakeN32Premul(WIDTH,
+                                                 tab_height
+                                                 ))
+
                 assert self.tab_surface is not None
             else:
                 self.tab_surface = skia.Surface(WIDTH, tab_height)
@@ -1653,7 +1672,7 @@ class Browser:
         if not self.active_tab_height:
             self.lock.release()
             return
-        
+
         scroll = clamp_scroll(
             self.scroll + SCROLL_STEP,
             self.active_tab_height
@@ -1746,4 +1765,3 @@ if __name__ == "__main__":
 
         browser.raster_and_draw()
         browser.schedule_animation_frame()
-        
