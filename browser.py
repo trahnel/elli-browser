@@ -1662,9 +1662,16 @@ class Browser:
 
     def handle_up(self):
         self.lock.acquire(blocking=True)
-        active_tab = self.tabs[self.active_tab]
-        task = Task(active_tab.scroll_up)
-        active_tab.task_runner.schedule_task(task)
+        if not self.active_tab_height:
+            self.lock.release()
+            return
+
+        scroll = clamp_scroll(
+            self.scroll - SCROLL_STEP,
+            self.active_tab_height
+        )
+        self.scroll = scroll
+        self.set_needs_raster_and_draw()
         self.lock.release()
 
     def handle_down(self):
