@@ -107,6 +107,14 @@ def do_request(session, method, url, headers, body):
     if method == "GET" and url == "/":
         return "200 OK", show_comments(session)
 
+    if method == "GET" and url == "/index.html":
+        with open("index.html") as f:
+            return "200 OK", f.read()
+
+    if method == "GET" and url == "/index.js":
+        with open("index.js") as f:
+            return "200 OK", f.read()
+
     if method == "GET" and url == "/count":
         return "200 OK", show_count()
 
