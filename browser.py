@@ -459,7 +459,8 @@ class TranslateAnimation:
 
     def animate(self):
         self.frame_count += 1
-        if self.frame_count >= self.num_frames: return
+        if self.frame_count >= self.num_frames:
+            return
         new_x = self.old_x + \
                 self.change_per_frame_x * self.frame_count
         new_y = self.old_y + \
@@ -569,12 +570,12 @@ class TextLayout:
         self.previous = previous
         self.children = []
 
-    def layout(self):
+    def layout(self, zoom):
         weight = self.node.style["font-weight"]
         style = self.node.style["font-style"]
         if style == 'normal':
             style = "roman"
-        size = float(self.node.style["font-size"][:-2])
+        size = device_px(float(self.node.style["font-size"][:-2]), zoom)
         self.font = get_font(size, weight, style)
 
         self.width = self.font.measureText(self.word)
@@ -606,22 +607,22 @@ class InputLayout:
         self.previous = previous
         self.children = []
 
-    def layout(self):
+    def layout(self, zoom):
         weight = self.node.style["font-weight"]
         style = self.node.style["font-style"]
         if style == 'normal':
             style = "roman"
-        size = float(self.node.style["font-size"][:-2])
+        size = device_px(float(self.node.style["font-size"][:-2]), zoom)
         self.font = get_font(size, weight, style)
 
-        self.width = INPUT_WIDTH_PX
+        self.width = style_length(self.node, "width", INPUT_WIDTH_PX, zoom)
         if self.previous:
             space = self.previous.font.measureText(" ")
             self.x = self.previous.x + self.previous.width + space
         else:
             self.x = self.parent.x
 
-        self.height = linespace(self.font)
+        self.height = style_length(self.node, "height", linespace(self.font), zoom)
 
     def paint(self, display_list):
         cmds = []
@@ -655,8 +656,8 @@ class InlineLayout:
         self.children = []
         self.previous = previous
 
-    def layout(self):
-        self.width = self.parent.width
+    def layout(self, zoom):
+        self.width = style_length(self.node, 'width', self.parent.width, zoom)
         self.x = self.parent.x
 
         if self.previous:
@@ -665,30 +666,22 @@ class InlineLayout:
             self.y = self.parent.y
 
         self.new_line()
-        self.recurse(self.node)
+        self.recurse(self.node, zoom)
         for line in self.children:
-            line.layout()
-        self.height = sum([line.height for line in self.children])
+            line.layout(zoom)
+        self.height = style_length(self.node, 'height', sum([line.height for line in self.children]), zoom)
 
-    def recurse(self, node):
+    def recurse(self, node, zoom):
         if isinstance(node, Text):
-            self.text(node)
+            self.text(node, zoom)
         else:
             if node.tag == 'br':
                 self.new_line()
             elif node.tag == 'input' or node.tag == 'button':
-                self.input(node)
+                self.input(node, zoom)
             else:
                 for child in node.children:
-                    self.recurse(child)
-
-    def get_font(self, node):
-        weight = node.style["font-weight"]
-        style = node.style["font-style"]
-        if style == "normal":
-            style = "roman"
-        size = int(float(node.style["font-size"][:-2]) * .75)
-        return get_font(size, weight, style)
+                    self.recurse(child, zoom)
 
     def new_line(self):
         self.previous_word = None
@@ -697,23 +690,25 @@ class InlineLayout:
         new_line = LineLayout(self.node, self, last_line)
         self.children.append(new_line)
 
-    def input(self, node):
-        w = INPUT_WIDTH_PX
+    def input(self, node, zoom):
+        w = device_px(INPUT_WIDTH_PX, zoom)
         if self.cursor_x + w > self.x + self.width:
             self.new_line()
         line = self.children[-1]
         input = InputLayout(node, line, self.previous_word)
         line.children.append(input)
         self.previous_word = input
-        font = self.get_font(node)
+        style = node.style["font-style"]
+        size = device_px(float(node.style["font-size"][:-2]), zoom)
+        font = get_font(size, node, style)
         self.cursor_x += w + font.measureText(" ")
 
-    def text(self, node):
+    def text(self, node, zoom):
         weight = node.style["font-weight"]
         style = node.style["font-style"]
         if style == 'normal':
             style = "roman"
-        size = float(node.style["font-size"][:-2])
+        size = device_px(float(node.style["font-size"][:-2]), zoom)
         font = get_font(size, weight, style)
         for word in node.text.split():
             w = font.measureText(word)
@@ -751,7 +746,7 @@ class LineLayout:
         self.previous = previous
         self.children = []
 
-    def layout(self):
+    def layout(self, zoom):
         self.width = self.parent.width
         self.x = self.parent.x
 
@@ -761,7 +756,7 @@ class LineLayout:
             self.y = self.parent.y
 
         for word in self.children:
-            word.layout()
+            word.layout(zoom)
 
         if not self.children:
             self.height = 0
@@ -792,7 +787,7 @@ class BlockLayout:
         self.children = []
         self.previous = previous
 
-    def layout(self):
+    def layout(self, zoom):
         previous = None
         for child in self.node.children:
             if layout_mode(child) == 'inline':
@@ -802,7 +797,7 @@ class BlockLayout:
             self.children.append(next_block)
             previous = next_block
 
-        self.width = self.parent.width
+        self.width = style_length(self.node, "width", self.parent.width, zoom)
         self.x = self.parent.x
 
         if self.previous:
@@ -811,9 +806,9 @@ class BlockLayout:
             self.y = self.parent.y
 
         for child in self.children:
-            child.layout()
+            child.layout(zoom)
 
-        self.height = sum([child.height for child in self.children])
+        self.height = style_length(self.node, "height", sum([child.height for child in self.children]), zoom)
 
     def paint(self, display_list):
         cmds = []
@@ -835,21 +830,30 @@ class BlockLayout:
             self.x, self.y, self.width, self.height)
 
 
+def device_px(css_px, zoom):
+    return css_px * zoom
+
+
+def style_length(node, style_name, default_value, zoom):
+    style_val = node.style.get(style_name)
+    return device_px(float(style_val[:-2]), zoom) if style_val else default_value
+
+
 class DocumentLayout:
     def __init__(self, node):
         self.node = node
         self.parent = None
         self.children = []
 
-    def layout(self):
+    def layout(self, zoom):
         child = BlockLayout(self.node, self, None)
         self.children.append(child)
 
-        self.width = WIDTH - 2 * HSTEP
-        self.x = HSTEP
-        self.y = VSTEP
-        child.layout()
-        self.height = child.height + 2 * VSTEP
+        self.width = WIDTH - 2 * device_px(HSTEP, zoom)
+        self.x = device_px(HSTEP, zoom)
+        self.y = device_px(VSTEP, zoom)
+        child.layout(zoom)
+        self.height = child.height + 2 * device_px(VSTEP, zoom)
 
     def paint(self, display_list):
         self.children[0].paint(display_list)
@@ -1103,7 +1107,8 @@ def absolute_bounds_for_obj(obj):
     rect = skia.Rect.MakeXYWH(obj.x, obj.y, obj.width, obj.height)
     cur = obj.node
     while cur:
-        rect = map_translation(rect, parse_transform(cur.style.get("transform", "")))
+        rect = map_translation(rect, parse_transform(
+            cur.style.get("transform", "")))
         cur = cur.parent
     return rect
 
@@ -1486,6 +1491,7 @@ class Tab:
         self.history = []
         self.focus = None
         self.url = None
+        self.zoom = 1
 
         self.needs_style = False
         self.needs_layout = False
@@ -1503,6 +1509,7 @@ class Tab:
             self.default_style_sheet = CSSParser(f.read()).parse()
 
     def load(self, url, body=None):
+        self.zoom = 1
         self.scroll = 0
         self.scroll_changed_in_tab = True
 
@@ -1634,7 +1641,7 @@ class Tab:
         # Layout tree
         if self.needs_layout:
             self.document = DocumentLayout(self.nodes)
-            self.document.layout()
+            self.document.layout(self.zoom)
             self.needs_paint = True
             self.needs_layout = False
             # print_tree(self.document)
@@ -1738,6 +1745,17 @@ class Tab:
     def allowed_request(self, url):
         return self.allowed_origins == None or \
                url_origin(url) in self.allowed_origins
+
+    def zoom_by(self, increment):
+        if increment > 0:
+            self.zoom *= 1.1
+        else:
+            self.zoom *= 1 / 1.1
+        self.set_needs_render()
+
+    def reset_zoom(self):
+        self.zoom = 1
+        self.set_needs_render()
 
 
 REFRESH_RATE_SEC = 0.016  # 16ms
@@ -2066,6 +2084,16 @@ class Browser:
                 self.set_needs_draw()
         self.lock.release()
 
+    def increment_zoom(self, increment):
+        active_tab = self.tabs[self.active_tab]
+        task = Task(active_tab.zoom_by, increment)
+        active_tab.task_runner.schedule_task(task)
+
+    def reset_zoom(self):
+        active_tab = self.tabs[self.active_tab]
+        task = Task(active_tab.reset_zoom)
+        active_tab.task_runner.schedule_task(task)
+
     def handle_key(self, char):
         self.lock.acquire(blocking=True)
         if len(char) == 0:
@@ -2166,6 +2194,7 @@ if __name__ == "__main__":
     browser = Browser()
     browser.load(sys.argv[1])
 
+    cmd_down = False
     event = sdl2.SDL_Event()
     while True:
         if sdl2.SDL_PollEvent(ctypes.byref(event)) != 0:
@@ -2178,7 +2207,17 @@ if __name__ == "__main__":
             elif event.type == sdl2.SDL_MOUSEWHEEL:
                 browser.handle_mouse_wheel(event.wheel)
             elif event.type == sdl2.SDL_KEYDOWN:
-                if event.key.keysym.sym == sdl2.SDLK_RETURN:
+                if cmd_down:
+                    if event.key.keysym.sym == sdl2.SDLK_PLUS:
+                        browser.increment_zoom(1)
+                    elif event.key.keysym.sym == sdl2.SDLK_MINUS:
+                        browser.increment_zoom(-1)
+                    elif event.key.keysym.sym == sdl2.SDLK_0:
+                        browser.reset_zoom()
+                if event.key.keysym.sym == sdl2.SDLK_LGUI or \
+                        event.key.keysym.sym == sdl2.SDLK_RGUI:
+                    cmd_down = True
+                elif event.key.keysym.sym == sdl2.SDLK_RETURN:
                     browser.handle_enter()
                 elif event.key.keysym.sym == sdl2.SDLK_BACKSPACE:
                     browser.handle_backspace()
@@ -2186,6 +2225,10 @@ if __name__ == "__main__":
                     browser.handle_down()
                 elif event.key.keysym.sym == sdl2.SDLK_UP:
                     browser.handle_up()
+            elif event.type == sdl2.SDL_KEYUP:
+                if event.key.keysym.sym == sdl2.SDLK_LGUI or \
+                        event.key.keysym.sym == sdl2.SDLK_RGUI:
+                    cmd_down = False
             elif event.type == sdl2.SDL_TEXTINPUT:
                 browser.handle_key(event.text.text.decode('utf8'))
 
