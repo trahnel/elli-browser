@@ -127,15 +127,16 @@ def parse_color(color):
         return skia.ColorBLACK
 
 
-def draw_line(canvas, x1, y1, x2, y2):
+def draw_line(canvas, x1, y1, x2, y2, color):
+    sk_color = parse_color(color)
     path = skia.Path().moveTo(x1, y1).lineTo(x2, y2)
-    paint = skia.Paint(Color=skia.ColorBLACK)
+    paint = skia.Paint(Color=sk_color)
     paint.setStyle(skia.Paint.kStroke_Style)
     paint.setStrokeWidth(1)
     canvas.drawPath(path, paint)
 
 
-def draw_text(canvas, x, y, text, font, color=None):
+def draw_text(canvas, x, y, text, font, color):
     sk_color = parse_color(color)
     paint = skia.Paint(AntiAlias=True, Color=sk_color)
     canvas.drawString(
@@ -144,11 +145,11 @@ def draw_text(canvas, x, y, text, font, color=None):
     )
 
 
-def draw_rect(canvas, l, t, r, b, fill=None, border_color="black", width=1):
+def draw_rect(canvas, l, t, r, b, fill_color=None, border_color="black", width=1):
     paint = skia.Paint()
-    if fill:
+    if fill_color:
         paint.setStrokeWidth(width)
-        paint.setColor(parse_color(fill))
+        paint.setColor(parse_color(fill_color))
     else:
         paint.setStyle(skia.Paint.kStroke_Style)
         paint.setStrokeWidth(1)
@@ -931,14 +932,7 @@ class DrawRect(DisplayItem):
         self.color = color
 
     def execute(self, canvas):
-        draw_rect(canvas,
-                  self.left,
-                  self.top,
-                  self.right,
-                  self.bottom,
-                  self.color,
-                  width=0,
-                  )
+        draw_rect(canvas, self.left, self.top, self.right, self.bottom, self.color, width=0)
 
     def is_paint_command(self):
         return True
@@ -959,7 +953,7 @@ class DrawLine(DisplayItem):
         self.y2 = y2
 
     def execute(self, canvas):
-        draw_line(canvas, self.x1, self.y1, self.x2, self.y2)
+        draw_line(canvas, self.x1, self.y1, self.x2, self.y2, color)
 
     def is_paint_command(self):
         return True
@@ -1164,10 +1158,7 @@ class CompositedLayer:
         canvas.restore()
 
         if SHOW_COMPOSITED_LAYER_BORDERS:
-            draw_rect(
-                canvas, 0, 0, irect.width() - 1,
-                              irect.height() - 1,
-                border_color="red")
+            draw_rect(canvas, 0, 0, irect.width() - 1, irect.height() - 1, border_color="red")
 
 
 def resolve_url(url: str, current: str):
@@ -1492,6 +1483,7 @@ class Tab:
         self.focus = None
         self.url = None
         self.zoom = 1
+        self.dark_mode = False
 
         self.needs_style = False
         self.needs_layout = False
@@ -1634,6 +1626,10 @@ class Tab:
 
         # Styling
         if self.needs_style:
+            if self.dark_mode:
+                INHERITED_PROPERTIES["color"] = "white"
+            else:
+                INHERITED_PROPERTIES["color"] = "black"
             style(self.nodes, sorted(self.rules, key=cascade_priority), self)
             self.needs_layout = True
             self.needs_style = False
@@ -1757,6 +1753,10 @@ class Tab:
         self.zoom = 1
         self.set_needs_render()
 
+    def toggle_dark_mode(self):
+        self.dark_mode = not self.dark_mode
+        self.set_needs_render()
+
 
 REFRESH_RATE_SEC = 0.016  # 16ms
 
@@ -1772,6 +1772,7 @@ USE_GPU = True
 
 class Browser:
     def __init__(self):
+        self.dark_mode = False
         if USE_GPU:
             self.sdl_window = sdl2.SDL_CreateWindow(b"Browser",
                                                     sdl2.SDL_WINDOWPOS_CENTERED,
@@ -1947,39 +1948,45 @@ class Browser:
 
     def raster_chrome(self):
         canvas = self.chrome_surface.getCanvas()
-        canvas.clear(skia.ColorWHITE)
+        if self.dark_mode:
+            color = "white"
+            background_color = "black"
+        else:
+            color = "black"
+            background_color = "white"
+        canvas.clear(parse_color(background_color))
 
         # Draw tabs
         tabfont = skia.Font(skia.Typeface('Arial'), 20)
         for i, tab in enumerate(self.tabs):
             name = f"Tab {i}"
             x1, x2 = 40 + 80 * i, 120 + 80 * i
-            draw_line(canvas, x1, 0, x1, 40)
-            draw_line(canvas, x2, 0, x2, 40)
-            draw_text(canvas, x1 + 10, 10, name, tabfont)
+            draw_line(canvas, x1, 0, x1, 40, color)
+            draw_line(canvas, x2, 0, x2, 40, color)
+            draw_text(canvas, x1 + 10, 10, name, tabfont, color)
             if i == self.active_tab:
-                draw_line(canvas, 0, 40, x1, 40)
-                draw_line(canvas, x2, 40, WIDTH, 40)
+                draw_line(canvas, 0, 40, x1, 40, color)
+                draw_line(canvas, x2, 40, WIDTH, 40, color)
 
         # Plus button to add a tab
         buttonfont = skia.Font(skia.Typeface('Arial'), 30)
-        draw_rect(canvas, 10, 10, 30, 30)
-        draw_text(canvas, 11, 4, "+", buttonfont)
+        draw_rect(canvas, 10, 10, 30, 30, fill_color=background_color, border_color=color)
+        draw_text(canvas, 11, 4, "+", buttonfont, color)
 
         # Draw address bar
-        draw_rect(canvas, 40, 50, WIDTH - 10, 90)
+        draw_rect(canvas, 40, 50, WIDTH - 10, 90, fill_color=background_color, border_color=color)
         if self.focus == "address bar":
-            draw_text(canvas, 55, 55, self.address_bar, buttonfont)
+            draw_text(canvas, 55, 55, self.address_bar, buttonfont, color)
             w = buttonfont.measureText(self.address_bar)
-            draw_line(canvas, 55 + w, 55, 55 + w, 85)
+            draw_line(canvas, 55 + w, 55, 55 + w, 85, color)
         else:
             url = self.tabs[self.active_tab].url
-            draw_text(canvas, 55, 55, url, buttonfont)
+            draw_text(canvas, 55, 55, url, buttonfont, color)
 
         # Draw back button
-        draw_rect(canvas, 10, 50, 35, 90)
+        draw_rect(canvas, 10, 50, 35, 90, fill_color=background_color, border_color=color)
         path = skia.Path().moveTo(15, 70).lineTo(30, 55).lineTo(30, 85)
-        paint = skia.Paint(Color=skia.ColorBLACK, Style=skia.Paint.kFill_Style)
+        paint = skia.Paint(Color=parse_color(color), Style=skia.Paint.kFill_Style)
         canvas.drawPath(path, paint)
 
     def composite(self):
@@ -2026,9 +2033,12 @@ class Browser:
             self.draw_list.append(current_effect)
 
     def draw(self):
-        # Clear all
         canvas = self.root_surface.getCanvas()
-        canvas.clear(skia.ColorWHITE)
+        # Clear all
+        if self.dark_mode:
+            canvas.clear(skia.ColorBLACK)
+        else:
+            canvas.clear(skia.ColorWHITE)
 
         # Tab canvas
         canvas.save()
@@ -2186,6 +2196,12 @@ class Browser:
             sdl2.SDL_GL_DeleteContext(self.gl_context)
         sdl2.SDL_DestroyWindow(self.sdl_window)
 
+    def toggle_dark_mode(self):
+        self.dark_mode = not self.dark_mode
+        active_tab = self.tabs[self.active_tab]
+        task = Task(active_tab.toggle_dark_mode)
+        active_tab.task_runner.schedule_task(task)
+
 
 if __name__ == "__main__":
     import sys
@@ -2214,6 +2230,8 @@ if __name__ == "__main__":
                         browser.increment_zoom(-1)
                     elif event.key.keysym.sym == sdl2.SDLK_0:
                         browser.reset_zoom()
+                    elif event.key.keysym.sym == sdl2.SDLK_d:
+                        browser.toggle_dark_mode()
                 if event.key.keysym.sym == sdl2.SDLK_LGUI or \
                         event.key.keysym.sym == sdl2.SDLK_RGUI:
                     cmd_down = True
