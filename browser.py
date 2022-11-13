@@ -488,13 +488,13 @@ def style(node, rules, tab):
             node.style[prop] = default_value
 
     # Selector styles
-    for selector, body in rules:
-        if not selector.matches(node):
-            continue
+    for media, selector, body in rules:
+        if media:
+            if (media == "dark") != tab.dark_mode: continue
+        if not selector.matches(node): continue
         for prop, value in body.items():
             computed_value = compute_style(node, prop, value)
-            if not computed_value:
-                continue
+            if not computed_value: continue
             node.style[prop] = computed_value
 
     # Inline styles
@@ -559,7 +559,7 @@ def diff_styles(old_style, new_style):
 
 
 def cascade_priority(rule):
-    selector, body = rule
+    media, selector, body = rule
     return selector.priority
 
 
@@ -1216,6 +1216,16 @@ class CSSParser:
         val = self.word()
         return prop.lower(), val
 
+    def media_query(self):
+        self.literal("@")
+        assert self.word() == "media"
+        self.whitespace()
+        self.literal("(")
+        (prop, val) = self.pair(")")
+        self.whitespace()
+        self.literal(")")
+        return prop, val
+
     def body(self):
         pairs = {}
         while self.i < len(self.s) and self.s[self.i] != "}":
@@ -1253,16 +1263,30 @@ class CSSParser:
 
     def parse(self):
         rules = []
+        media = None
+        self.whitespace()
         while self.i < len(self.s):
             try:
-                self.whitespace()
-                selector = self.selector()
-                self.literal("{")
-                self.whitespace()
-                body = self.body()
-                self.literal("}")
-                self.whitespace()
-                rules.append((selector, body))
+                if self.s[self.i] == "@" and not media:
+                    prop, val = self.media_query()
+                    if prop == "prefers-color-scheme" and \
+                            val in ["dark", "light"]:
+                        media = val
+                    self.whitespace()
+                    self.literal("{")
+                    self.whitespace()
+                elif self.s[self.i] == "}" and media:
+                    self.literal("}")
+                    media = None
+                    self.whitespace()
+                else:
+                    selector = self.selector()
+                    self.literal("{")
+                    self.whitespace()
+                    body = self.body()
+                    self.literal("}")
+                    self.whitespace()
+                    rules.append((media, selector, body))
             except AssertionError:
                 why = self.ignore_until(["}"])
                 if why == "}":
