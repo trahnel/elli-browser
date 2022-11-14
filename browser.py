@@ -1796,7 +1796,6 @@ USE_GPU = True
 
 class Browser:
     def __init__(self):
-        self.dark_mode = False
         if USE_GPU:
             self.sdl_window = sdl2.SDL_CreateWindow(b"Browser",
                                                     sdl2.SDL_WINDOWPOS_CENTERED,
@@ -1861,6 +1860,9 @@ class Browser:
         self.active_tab_height = 0
         self.active_tab_display_list: list[DisplayItem] = None
 
+        self.dark_mode = False
+
+        self.display_list = []
         self.composited_updates = {}
         self.composited_layers: list[CompositedLayer] = []
         self.draw_list: list[DrawCompositedLayer] = []
@@ -2226,6 +2228,29 @@ class Browser:
         task = Task(active_tab.toggle_dark_mode)
         active_tab.task_runner.schedule_task(task)
 
+    def go_back(self):
+        active_tab = self.tabs[self.active_tab]
+        task = Task(active_tab.go_back)
+        active_tab.task_runner.schedule_task(task)
+        self.clear_data()
+
+    def clear_data(self):
+        self.scroll = 0
+        self.url = None
+        self.display_list = []
+        self.composited_layers = []
+
+    def focus_address_bar(self):
+        self.lock.acquire(blocking=True)
+        self.focus = "address bar"
+        self.address_bar = ""
+        self.set_needs_raster()
+        self.lock.release()
+
+    def cycle_tabs(self):
+        new_active_tab = (self.active_tab + 1) % len(self.tabs)
+        self.set_active_tab(new_active_tab)
+
 
 if __name__ == "__main__":
     import sys
@@ -2234,6 +2259,7 @@ if __name__ == "__main__":
     browser = Browser()
     browser.load(sys.argv[1])
 
+    ctrl_down = False
     cmd_down = False
     event = sdl2.SDL_Event()
     while True:
@@ -2247,7 +2273,10 @@ if __name__ == "__main__":
             elif event.type == sdl2.SDL_MOUSEWHEEL:
                 browser.handle_mouse_wheel(event.wheel)
             elif event.type == sdl2.SDL_KEYDOWN:
-                if cmd_down:
+                if ctrl_down:
+                    if event.key.keysym.sym == sdl2.SDLK_TAB:
+                        browser.cycle_tabs()
+                elif cmd_down:
                     if event.key.keysym.sym == sdl2.SDLK_PLUS:
                         browser.increment_zoom(1)
                     elif event.key.keysym.sym == sdl2.SDLK_MINUS:
@@ -2256,7 +2285,20 @@ if __name__ == "__main__":
                         browser.reset_zoom()
                     elif event.key.keysym.sym == sdl2.SDLK_d:
                         browser.toggle_dark_mode()
-                if event.key.keysym.sym == sdl2.SDLK_LGUI or \
+                    elif event.key.keysym.sym == sdl2.SDLK_LEFT:
+                        browser.go_back()
+                    elif event.key.keysym.sym == sdl2.SDLK_l:
+                        browser.focus_address_bar()
+                    elif event.key.keysym.sym == sdl2.SDLK_t:
+                        browser.load("https://browser.engineering/")
+                    elif event.key.keysym.sym == sdl2.SDLK_q:
+                        browser.handle_quit()
+                        sdl2.SDL_Quit()
+                        sys.exit()
+                elif event.key.keysym.sym == sdl2.SDLK_LCTRL or \
+                        event.key.keysym.sym == sdl2.SDLK_RCTRL:
+                    ctrl_down = True
+                elif event.key.keysym.sym == sdl2.SDLK_LGUI or \
                         event.key.keysym.sym == sdl2.SDLK_RGUI:
                     cmd_down = True
                 elif event.key.keysym.sym == sdl2.SDLK_RETURN:
@@ -2268,7 +2310,10 @@ if __name__ == "__main__":
                 elif event.key.keysym.sym == sdl2.SDLK_UP:
                     browser.handle_up()
             elif event.type == sdl2.SDL_KEYUP:
-                if event.key.keysym.sym == sdl2.SDLK_LGUI or \
+                if event.key.keysym.sym == sdl2.SDLK_LCTRL or \
+                        event.key.keysym.sym == sdl2.SDLK_RCTRL:
+                    ctrl_down = False
+                elif event.key.keysym.sym == sdl2.SDLK_LGUI or \
                         event.key.keysym.sym == sdl2.SDLK_RGUI:
                     cmd_down = False
             elif event.type == sdl2.SDL_TEXTINPUT:
