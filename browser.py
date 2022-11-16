@@ -239,6 +239,7 @@ class Element:
         self.parent = parent
         self.style = {}
         self.animations = {}
+        self.is_focused = False
 
     def __repr__(self):
         return repr("<" + self.tag + ">")
@@ -276,7 +277,7 @@ class HTMLParser:
         return self.finish()
 
     def get_attributes(self, text: str):
-        parts = [part.strip() for part in text.split(" ", 1)]
+        parts = [part.strip() for part in text.split()]
         tag = parts[0].lower()
 
         attributes = {}
@@ -593,6 +594,11 @@ class TextLayout:
         display_list.append(
             DrawText(self.x, self.y, self.word, self.font, color))
 
+    def rect(self):
+        return skia.Rect.MakeLTRB(
+            self.x, self.y, self.x + self.width,
+                            self.y + self.height)
+
     def __repr__(self):
         return "TextLayout(x={}, y={}, width={}, height={}, font={}, word={}".format(
             self.x, self.y, self.width, self.height, self.font, self.word)
@@ -630,6 +636,7 @@ class InputLayout:
         rect = skia.Rect.MakeLTRB(
             self.x, self.y, self.x + self.width, self.y + self.height)
         bgcolor = self.node.style.get("background-color", "transparent")
+
         if bgcolor != "transparent":
             radius = float(self.node.style.get("border-radius", "0px")[:-2])
             cmds.append(DrawRRect(rect, radius, bgcolor))
@@ -642,6 +649,11 @@ class InputLayout:
         color = self.node.style["color"]
         cmds.append(DrawText(self.x, self.y, text, self.font, color))
 
+        if self.node.is_focused and self.node.tag == "input":
+            cx = rect.left() + self.font.measureText(text)
+            cmds.append(DrawLine(cx, rect.top(), cx, rect.bottom()))
+
+        paint_outline(self.node, cmds, rect)
         cmds = paint_visual_effects(self.node, cmds, rect)
         display_list.extend(cmds)
 
@@ -776,6 +788,16 @@ class LineLayout:
         for child in self.children:
             child.paint(display_list)
 
+        outline_rect = skia.Rect.MakeEmpty()
+        focused_node = None
+        for child in self.children:
+            node = child.node
+            if has_outline(node.parent):
+                focused_node = node.parent
+                outline_rect.join(child.rect())
+        if focused_node:
+            paint_outline(focused_node, display_list, outline_rect)
+
     def __repr__(self):
         return "LineLayout(x={}, y={}, width={}, height={})".format(
             self.x, self.y, self.width, self.height)
@@ -823,6 +845,8 @@ class BlockLayout:
         for child in self.children:
             child.paint(cmds)
 
+        paint_outline(self.node, cmds, rect)
+
         cmds = paint_visual_effects(self.node, cmds, rect)
         display_list.extend(cmds)
 
@@ -838,6 +862,10 @@ def device_px(css_px, zoom):
 def style_length(node, style_name, default_value, zoom):
     style_val = node.style.get(style_name)
     return device_px(float(style_val[:-2]), zoom) if style_val else default_value
+
+
+def get_tabindex(node):
+    return int(node.attributes.get("tabindex", "9999999"))
 
 
 class DocumentLayout:
@@ -953,7 +981,7 @@ class DrawLine(DisplayItem):
         self.y2 = y2
 
     def execute(self, canvas):
-        draw_line(canvas, self.x1, self.y1, self.x2, self.y2, color)
+        draw_line(canvas, self.x1, self.y1, self.x2, self.y2, "black")
 
     def is_paint_command(self):
         return True
@@ -961,6 +989,46 @@ class DrawLine(DisplayItem):
     def __repr__(self):
         return "DrawLine top={} left={} bottom={} right={}".format(
             self.y1, self.x1, self.y2, self.x2)
+
+
+def parse_outline(outline_str):
+    if not outline_str: return None
+    values = outline_str.split(" ")
+    if len(values) != 3: return None
+    if values[1] != "solid": return None
+    return (int(values[0][:-2]), values[2])
+
+
+def is_focused(node):
+    if isinstance(node, Text):
+        node = node.parent
+    return node.is_focused
+
+
+def has_outline(node):
+    return parse_outline(node.style.get("outline"))
+
+
+def paint_outline(node, cmds, rect):
+    if has_outline(node):
+        thickness, color = parse_outline(node.style.get("outline"))
+        cmds.append(DrawOutline(rect, color, thickness))
+
+
+class DrawOutline(DisplayItem):
+    def __init__(self, rect, color, thickness):
+        super().__init__(rect)
+        self.color = color
+        self.thickness = thickness
+
+    def is_paint_command(self):
+        return True
+
+    def execute(self, canvas):
+        draw_rect(canvas,
+                  self.rect.left(), self.rect.top(),
+                  self.rect.right(), self.rect.bottom(),
+                  border_color=self.color, width=self.thickness)
 
 
 class ClipRRect(DisplayItem):
@@ -1049,6 +1117,7 @@ class DrawCompositedLayer(DisplayItem):
 
     def execute(self, canvas):
         layer = self.composited_layer
+        if not layer.surface: return
         bounds = layer.composited_bounds()
         layer.surface.draw(canvas, bounds.left(), bounds.top())
 
@@ -1185,6 +1254,21 @@ def tree_to_list(tree, list):
     return list
 
 
+class PseudoclassSelector:
+    def __init__(self, pseudoclass, base):
+        self.pseudoclass = pseudoclass
+        self.base = base
+        self.priority = self.base.priority
+
+    def matches(self, node):
+        if not self.base.matches(node):
+            return False
+        if self.pseudoclass == "focus":
+            return is_focused(node)
+        else:
+            return False
+
+
 class CSSParser:
     def __init__(self, s: str):
         self.s = s
@@ -1208,12 +1292,12 @@ class CSSParser:
         assert self.i < len(self.s) and self.s[self.i] == literal
         self.i += 1
 
-    def pair(self):
+    def pair(self, until):
         prop = self.word()
         self.whitespace()
         self.literal(':')
         self.whitespace()
-        val = self.word()
+        val = self.until_char(until)
         return prop.lower(), val
 
     def media_query(self):
@@ -1230,7 +1314,7 @@ class CSSParser:
         pairs = {}
         while self.i < len(self.s) and self.s[self.i] != "}":
             try:
-                prop, val = self.pair()
+                prop, val = self.pair([";", "}"])
                 pairs[prop.lower()] = val
                 self.whitespace()
                 self.literal(';')
@@ -1244,19 +1328,32 @@ class CSSParser:
                     break
         return pairs
 
-    def ignore_until(self, chars: str):
+    def ignore_until(self, chars):
         while self.i < len(self.s):
             if self.s[self.i] in chars:
                 return self.s[self.i]
             else:
                 self.i += 1
 
-    def selector(self):
+    def until_char(self, chars):
+        start = self.i
+        while self.i < len(self.s) and self.s[self.i] not in chars:
+            self.i += 1
+        return self.s[start:self.i]
+
+    def simple_selector(self):
         out = TagSelector(self.word().lower())
+        if self.i < len(self.s) and self.s[self.i] == ":":
+            self.literal(":")
+            pseudoclass = self.word().lower()
+            out = PseudoclassSelector(pseudoclass, out)
+        return out
+
+    def selector(self):
+        out = self.simple_selector()
         self.whitespace()
         while self.i < len(self.s) and self.s[self.i] != "{":
-            tag = self.word()
-            descendant = TagSelector(tag.lower())
+            descendant = self.simple_selector()
             out = DescendantSelector(out, descendant)
             self.whitespace()
         return out
@@ -1498,6 +1595,15 @@ def clamp_scroll(scroll, tab_height):
     return max(0, min(scroll, tab_height - (HEIGHT - CHROME_PX)))
 
 
+def is_focusable(node):
+    if get_tabindex(node) <= 0:
+        return False
+    elif "tabindex" in node.attributes:
+        return True
+    else:
+        return node.tag in ["input", "button", "a"]
+
+
 class Tab:
     def __init__(self, browser):
         self.display_list = []
@@ -1512,6 +1618,7 @@ class Tab:
         self.needs_style = False
         self.needs_layout = False
         self.needs_paint = False
+        self.needs_focus_scroll = False
 
         self.browser: Browser = browser
         self.task_runner = TaskRunner(self)
@@ -1525,6 +1632,7 @@ class Tab:
             self.default_style_sheet = CSSParser(f.read()).parse()
 
     def load(self, url, body=None):
+        self.focus = None
         self.zoom = 1
         self.scroll = 0
         self.scroll_changed_in_tab = True
@@ -1624,6 +1732,10 @@ class Tab:
             self.scroll_changed_in_tab = True
         self.scroll = clamped_scroll
 
+        if self.needs_focus_scroll and self.focus:
+            self.scroll_to(self.focus)
+        self.needs_focus_scroll = False
+
         scroll = None
         if self.scroll_changed_in_tab:
             scroll = self.scroll
@@ -1670,22 +1782,21 @@ class Tab:
         if self.needs_paint:
             self.display_list = []
             self.document.paint(self.display_list)
-
-            if self.focus:
-                obj = [obj for obj in tree_to_list(self.document, [])
-                       if obj.node == self.focus][0]
-                text = self.focus.attributes.get("value", "")
-                x = obj.x + obj.font.measureText(text)
-                y = obj.y
-                self.display_list.append(
-                    DrawLine(x, y, x, y + obj.height)
-                )
             self.needs_paint = False
 
         self.measure_render.stop()
 
         # for item in self.display_list:
         #     print_tree(item)
+
+    def focus_element(self, node):
+        if node and node != self.focus:
+            self.needs_focus_scroll = True
+        if self.focus:
+            self.focus.is_focused = False
+        self.focus = node
+        if node:
+            node.is_focused = True
 
     def scroll_up(self):
         if self.scroll > 0:
@@ -1709,24 +1820,11 @@ class Tab:
         while elt:
             if isinstance(elt, Text):
                 pass
-            elif elt.tag == 'a' and "href" in elt.attributes:
-                if self.js.dispatch_event("click", elt):
-                    return
-                url = resolve_url(elt.attributes['href'], self.url)
-                return self.load(url)
-            elif elt.tag == 'input':
-                if self.js.dispatch_event("click", elt):
-                    return
-                self.focus = elt
-                elt.attributes["value"] = ""
-                return self.set_needs_render()
-            elif elt.tag == 'button':
-                if self.js.dispatch_event("click", elt):
-                    return
-                while elt:
-                    if elt.tag == 'form' and 'action' in elt.attributes:
-                        return self.submit_form(elt)
-                    elt = elt.parent
+            elif is_focusable(elt):
+                self.focus_element(elt)
+                self.activate_element(elt)
+                self.set_needs_render()
+                return
             elt = elt.parent
 
     def key_press(self, char):
@@ -1780,6 +1878,60 @@ class Tab:
     def toggle_dark_mode(self):
         self.dark_mode = not self.dark_mode
         self.set_needs_render()
+
+    def advance_tab(self):
+        focusable_nodes = [node
+                           for node in tree_to_list(self.nodes, [])
+                           if isinstance(node, Element)
+                           and is_focusable(node)
+                           and get_tabindex(node) >= 0]
+        focusable_nodes.sort(key=get_tabindex)
+
+        if self.focus in focusable_nodes:
+            idx = focusable_nodes.index(self.focus) + 1
+        else:
+            idx = 0
+
+        if idx < len(focusable_nodes):
+            self.focus_element(focusable_nodes[idx])
+        else:
+            self.focus_element(None)
+            self.browser.focus_address_bar()
+        self.set_needs_render()
+
+    def enter(self):
+        if not self.focus: return
+        if self.js.dispatch_event("click", self.focus): return
+        self.activate_element(self.focus)
+
+    def activate_element(self, elt):
+        if elt.tag == "input":
+            elt.attributes["value"] = ""
+        elif elt.tag == "a" and "href" in elt.attributes:
+            url = resolve_url(elt.attributes["href"], self.url)
+            self.load(url)
+        elif elt.tag == "button":
+            while elt:
+                if elt.tag == "form" and "action" in elt.attributes:
+                    self.submit_form(elt)
+                elt = elt.parent
+
+    def scroll_to(self, elt):
+        objs = [
+            obj for obj in tree_to_list(self.document, [])
+            if obj.node == self.focus
+        ]
+        if not objs: return
+        obj = objs[0]
+
+        content_height = HEIGHT - CHROME_PX
+        if self.scroll < obj.y < self.scroll + content_height:
+            return
+
+        document_height = math.ceil(self.document.height)
+        new_scroll = obj.y - SCROLL_STEP
+        self.scroll = clamp_scroll(new_scroll, document_height)
+        self.scroll_changed_in_tab = True
 
 
 REFRESH_RATE_SEC = 0.016  # 16ms
@@ -1982,6 +2134,11 @@ class Browser:
             background_color = "white"
         canvas.clear(parse_color(background_color))
 
+        # Plus button to add a tab
+        buttonfont = skia.Font(skia.Typeface('Arial'), 30)
+        draw_rect(canvas, 10, 10, 30, 30, fill_color=background_color, border_color=color)
+        draw_text(canvas, 11, 4, "+", buttonfont, color)
+
         # Draw tabs
         tabfont = skia.Font(skia.Typeface('Arial'), 20)
         for i, tab in enumerate(self.tabs):
@@ -1993,11 +2150,6 @@ class Browser:
             if i == self.active_tab:
                 draw_line(canvas, 0, 40, x1, 40, color)
                 draw_line(canvas, x2, 40, WIDTH, 40, color)
-
-        # Plus button to add a tab
-        buttonfont = skia.Font(skia.Typeface('Arial'), 30)
-        draw_rect(canvas, 10, 10, 30, 30, fill_color=background_color, border_color=color)
-        draw_text(canvas, 11, 4, "+", buttonfont, color)
 
         # Draw address bar
         draw_rect(canvas, 40, 50, WIDTH - 10, 90, fill_color=background_color, border_color=color)
@@ -2179,6 +2331,10 @@ class Browser:
             self.schedule_load_tab(self.address_bar)
             self.focus = None
             self.set_needs_raster()
+        elif self.focus == "content":
+            active_tab = self.tabs[self.active_tab]
+            task = Task(active_tab.enter)
+            active_tab.task_runner.schedule_task(task)
         self.lock.release()
 
     def handle_backspace(self):
@@ -2187,6 +2343,12 @@ class Browser:
             self.address_bar = self.address_bar[:-1]
             self.set_needs_raster()
         self.lock.release()
+
+    def handle_tab(self):
+        self.focus = "content"
+        active_tab = self.tabs[self.active_tab]
+        task = Task(active_tab.advance_tab)
+        active_tab.task_runner.schedule_task(task)
 
     def handle_mouse_wheel(self, e):
         if e.y == -1:
@@ -2303,6 +2465,8 @@ if __name__ == "__main__":
                     cmd_down = True
                 elif event.key.keysym.sym == sdl2.SDLK_RETURN:
                     browser.handle_enter()
+                elif event.key.keysym.sym == sdl2.SDLK_TAB:
+                    browser.handle_tab()
                 elif event.key.keysym.sym == sdl2.SDLK_BACKSPACE:
                     browser.handle_backspace()
                 elif event.key.keysym.sym == sdl2.SDLK_DOWN:
