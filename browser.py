@@ -230,6 +230,7 @@ class Text:
         self.parent = parent
         self.style = {}
         self.animations = {}
+        self.layout_object = None
 
     def __repr__(self):
         return repr(self.text)
@@ -244,6 +245,7 @@ class Element:
         self.style = {}
         self.animations = {}
         self.is_focused = False
+        self.layout_object = None
 
     def __repr__(self):
         return repr("<" + self.tag + ">")
@@ -669,6 +671,7 @@ class InputLayout:
 class InlineLayout:
     def __init__(self, node, parent, previous):
         self.node = node
+        node.layout_object = self
         self.parent = parent
         self.children = []
         self.previous = previous
@@ -810,6 +813,7 @@ class LineLayout:
 class BlockLayout:
     def __init__(self, node, parent, previous):
         self.node = node
+        node.layout_object = self
         self.parent = parent
         self.children = []
         self.previous = previous
@@ -875,6 +879,7 @@ def get_tabindex(node):
 class DocumentLayout:
     def __init__(self, node):
         self.node = node
+        node.layout_object = self
         self.parent = None
         self.children = []
 
@@ -1632,6 +1637,11 @@ class AccessibilityNode:
         self.children = []
         self.text = None
 
+        if node.layout_object:
+            self.bounds = absolute_bounds_for_obj(node.layout_object)
+        else:
+            self.bounds = None
+
         if isinstance(node, Text):
             if is_focusable(node.parent):
                 self.role = "focusable text"
@@ -1692,6 +1702,18 @@ class AccessibilityNode:
         else:
             for grandchild_node in child_node.children:
                 self.build_internal(grandchild_node)
+
+    def intersects(self, x, y):
+        if self.bounds:
+            return skia.Rect.Intersects(self.bounds,
+                                        skia.Rect.MakeXYWH(x, y, 1, 1))
+        return False
+
+    def hit_test(self, x, y):
+        nodes = [node for node in tree_to_list(self, [])
+                 if node.intersects(x, y)]
+        if nodes:
+            return nodes[-1]
 
 
 class Tab:
@@ -2130,6 +2152,10 @@ class Browser:
         self.spoken_alerts = []
         self.active_alerts = []
 
+        self.pending_hover = None
+        self.hovered_a11y_node = None
+        self.needs_speak_hovered_node = False
+
         self.measure_composite_raster_and_draw = MeasureTime("raster-and-draw")
 
         if sdl2.SDL_BYTEORDER == sdl2.SDL_BIG_ENDIAN:
@@ -2322,6 +2348,21 @@ class Browser:
                 current_effect = self.clone_latest(parent, [current_effect])
                 parent = parent.parent
             self.draw_list.append(current_effect)
+
+        if self.pending_hover:
+            (x, y) = self.pending_hover
+            a11y_node = self.accessibility_tree.hit_test(x, y)
+            if a11y_node:
+                if not self.hovered_a11y_node or \
+                        a11y_node.node != self.hovered_a11y_node.node:
+                    self.needs_speak_hovered_node = True
+                self.hovered_a11y_node = a11y_node
+            self.pending_hover = None
+
+        if self.hovered_a11y_node:
+            self.draw_list.append(DrawOutline(
+                self.hovered_a11y_node.bounds,
+                "white" if self.dark_mode else "black", 2))
 
     def draw(self):
         canvas = self.root_surface.getCanvas()
@@ -2580,6 +2621,10 @@ class Browser:
                     self.focus_a11y_node, "element focused ")
             self.last_tab_focus = self.tab_focus
 
+        if self.needs_speak_hovered_node:
+            self.speak_node(self.hovered_a11y_node, "Hit test ")
+        self.needs_speak_hovered_node = False
+
     def speak_document(self):
         text = "Here are the document contents: "
         tree_list = tree_to_list(self.accessibility_tree, [])
@@ -2599,6 +2644,13 @@ class Browser:
 
         if text:
             speak_text(text)
+
+    def handle_hover(self, event):
+        if not self.accessibility_is_on or \
+                not self.accessibility_tree:
+            return
+        self.pending_hover = (event.x, event.y - CHROME_PX)
+        self.set_needs_accessibility()
 
 
 if __name__ == "__main__":
@@ -2621,6 +2673,8 @@ if __name__ == "__main__":
                 browser.handle_click(event.button)
             elif event.type == sdl2.SDL_MOUSEWHEEL:
                 browser.handle_mouse_wheel(event.wheel)
+            elif event.type == sdl2.SDL_MOUSEMOTION:
+                browser.handle_hover(event.motion)
             elif event.type == sdl2.SDL_KEYDOWN:
                 if ctrl_down:
                     if event.key.keysym.sym == sdl2.SDLK_TAB:
