@@ -22,6 +22,10 @@ Node.prototype.getAttribute = function (attr) {
   return call_python('getAttribute', this.handle, attr);
 };
 
+Node.prototype.setAttribute = function(attr, value) {
+    return call_python("setAttribute", this.handle, attr, value);
+}
+
 Node.prototype.addEventListener = function (type, listener) {
   if (!LISTENERS[this.handle]) {
     LISTENERS[this.handle] = {};
