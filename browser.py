@@ -1185,7 +1185,7 @@ def absolute_bounds_for_obj(obj):
     return rect
 
 
-SHOW_COMPOSITED_LAYER_BORDERS = True
+SHOW_COMPOSITED_LAYER_BORDERS = False
 
 
 class CompositedLayer:
@@ -1239,7 +1239,7 @@ class CompositedLayer:
             draw_rect(canvas, 0, 0, irect.width() - 1, irect.height() - 1, border_color="red")
 
 
-def resolve_url(url: str, current: str):
+def resolve_url(url, current):
     if "://" in url:
         return url
     elif url.startswith("/"):
@@ -2178,11 +2178,19 @@ class Browser:
 
     def load(self, url):
         self.lock.acquire(blocking=True)
-        new_tab = Tab(self)
-        self.set_active_tab(len(self.tabs))
-        self.tabs.append(new_tab)
-        self.schedule_load_tab(url)
+        self.load_internal(url)
         self.lock.release()
+
+    def load_internal(self, url):
+        new_tab = Tab(self)
+        self.tabs.append(new_tab)
+        self.set_active_tab(len(self.tabs) - 1)
+        self.schedule_load(url)
+
+    def schedule_load(self, url, body=None):
+        active_tab = self.tabs[self.active_tab]
+        task = Task(active_tab.load, url, body)
+        active_tab.task_runner.schedule_task(task)
 
     def set_active_tab(self, index):
         self.active_tab = index
@@ -2297,8 +2305,8 @@ class Browser:
             w = buttonfont.measureText(self.address_bar)
             draw_line(canvas, 55 + w, 55, 55 + w, 85, color)
         else:
-            url = self.tabs[self.active_tab].url
-            draw_text(canvas, 55, 55, url, buttonfont, color)
+            if self.url:
+                draw_text(canvas, 55, 55, self.url, buttonfont, color)
 
         # Draw back button
         draw_rect(canvas, 10, 50, 35, 90, fill_color=background_color, border_color=color)
@@ -2518,7 +2526,7 @@ class Browser:
             if 40 <= e.x < 40 + 80 * len(self.tabs) and 0 <= e.y < 40:  # Tabs
                 self.active_tab = int((e.x - 40) / 80)
             elif 10 <= e.x < 30 and 10 <= e.y < 30:  # + button, new tab
-                self.load("https://browser.engineering/")
+                self.load_internal("https://browser.engineering/")
             elif 10 <= e.x < 35 and 40 <= e.y < 90:  # Back button
                 self.tabs[self.active_tab].go_back()
             elif 50 <= e.x < WIDTH - 10 and 40 <= e.y < 90:
@@ -2695,7 +2703,7 @@ if __name__ == "__main__":
                     elif event.key.keysym.sym == sdl2.SDLK_l:
                         browser.focus_address_bar()
                     elif event.key.keysym.sym == sdl2.SDLK_t:
-                        browser.load("https://browser.engineering/")
+                        browser.load_internal("https://browser.engineering/")
                     elif event.key.keysym.sym == sdl2.SDLK_q:
                         browser.handle_quit()
                         sdl2.SDL_Quit()
