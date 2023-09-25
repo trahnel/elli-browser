@@ -170,7 +170,7 @@ def paint_visual_effects(node, cmds, rect):
 
     needs_clip = node.style.get("overflow", "visible") == "clip"
     needs_blend_isolation = blend_mode != skia.BlendMode.kSrcOver or \
-                            needs_clip or opacity != 1.0
+        needs_clip or opacity != 1.0
 
     if needs_clip:
         clip_radius = border_radius
@@ -470,9 +470,9 @@ class TranslateAnimation:
         if self.frame_count >= self.num_frames:
             return
         new_x = self.old_x + \
-                self.change_per_frame_x * self.frame_count
+            self.change_per_frame_x * self.frame_count
         new_y = self.old_y + \
-                self.change_per_frame_y * self.frame_count
+            self.change_per_frame_y * self.frame_count
         return "translate({}px,{}px)".format(new_x, new_y)
 
 
@@ -497,11 +497,14 @@ def style(node, rules, tab):
     # Selector styles
     for media, selector, body in rules:
         if media:
-            if (media == "dark") != tab.dark_mode: continue
-        if not selector.matches(node): continue
+            if (media == "dark") != tab.dark_mode:
+                continue
+        if not selector.matches(node):
+            continue
         for prop, value in body.items():
             computed_value = compute_style(node, prop, value)
-            if not computed_value: continue
+            if not computed_value:
+                continue
             node.style[prop] = computed_value
 
     # Inline styles
@@ -603,7 +606,7 @@ class TextLayout:
     def rect(self):
         return skia.Rect.MakeLTRB(
             self.x, self.y, self.x + self.width,
-                            self.y + self.height)
+            self.y + self.height)
 
     def __repr__(self):
         return "TextLayout(x={}, y={}, width={}, height={}, font={}, word={}".format(
@@ -635,7 +638,8 @@ class InputLayout:
         else:
             self.x = self.parent.x
 
-        self.height = style_length(self.node, "height", linespace(self.font), zoom)
+        self.height = style_length(
+            self.node, "height", linespace(self.font), zoom)
 
     def paint(self, display_list):
         cmds = []
@@ -689,7 +693,8 @@ class InlineLayout:
         self.recurse(self.node, zoom)
         for line in self.children:
             line.layout(zoom)
-        self.height = style_length(self.node, 'height', sum([line.height for line in self.children]), zoom)
+        self.height = style_length(self.node, 'height', sum(
+            [line.height for line in self.children]), zoom)
 
     def recurse(self, node, zoom):
         if isinstance(node, Text):
@@ -839,7 +844,8 @@ class BlockLayout:
         for child in self.children:
             child.layout(zoom)
 
-        self.height = style_length(self.node, "height", sum([child.height for child in self.children]), zoom)
+        self.height = style_length(self.node, "height", sum(
+            [child.height for child in self.children]), zoom)
 
     def paint(self, display_list):
         cmds = []
@@ -969,7 +975,8 @@ class DrawRect(DisplayItem):
         self.color = color
 
     def execute(self, canvas):
-        draw_rect(canvas, self.left, self.top, self.right, self.bottom, self.color, width=0)
+        draw_rect(canvas, self.left, self.top, self.right,
+                  self.bottom, self.color, width=0)
 
     def is_paint_command(self):
         return True
@@ -1001,10 +1008,13 @@ class DrawLine(DisplayItem):
 
 
 def parse_outline(outline_str):
-    if not outline_str: return None
+    if not outline_str:
+        return None
     values = outline_str.split(" ")
-    if len(values) != 3: return None
-    if values[1] != "solid": return None
+    if len(values) != 3:
+        return None
+    if values[1] != "solid":
+        return None
     return (int(values[0][:-2]), values[2])
 
 
@@ -1126,7 +1136,8 @@ class DrawCompositedLayer(DisplayItem):
 
     def execute(self, canvas):
         layer = self.composited_layer
-        if not layer.surface: return
+        if not layer.surface:
+            return
         bounds = layer.composited_bounds()
         layer.surface.draw(canvas, bounds.left(), bounds.top())
 
@@ -1236,7 +1247,8 @@ class CompositedLayer:
         canvas.restore()
 
         if SHOW_COMPOSITED_LAYER_BORDERS:
-            draw_rect(canvas, 0, 0, irect.width() - 1, irect.height() - 1, border_color="red")
+            draw_rect(canvas, 0, 0, irect.width() - 1,
+                      irect.height() - 1, border_color="red")
 
 
 def resolve_url(url, current):
@@ -1986,7 +1998,7 @@ class Tab:
 
     def allowed_request(self, url):
         return self.allowed_origins == None or \
-               url_origin(url) in self.allowed_origins
+            url_origin(url) in self.allowed_origins
 
     def zoom_by(self, increment):
         if increment > 0:
@@ -2024,8 +2036,10 @@ class Tab:
         self.set_needs_render()
 
     def enter(self):
-        if not self.focus: return
-        if self.js.dispatch_event("click", self.focus): return
+        if not self.focus:
+            return
+        if self.js.dispatch_event("click", self.focus):
+            return
         self.activate_element(self.focus)
 
     def activate_element(self, elt):
@@ -2045,7 +2059,8 @@ class Tab:
             obj for obj in tree_to_list(self.document, [])
             if obj.node == self.focus
         ]
-        if not objs: return
+        if not objs:
+            return
         obj = objs[0]
 
         content_height = HEIGHT - CHROME_PX
@@ -2083,7 +2098,7 @@ class Browser:
                 self.sdl_window
             )
             print(("OpenGL initialized: vendor={}, renderer={}")
-            .format(
+                  .format(
                 GL.glGetString(GL.GL_VENDOR),
                 GL.glGetString(GL.GL_RENDERER)
             ))
@@ -2283,7 +2298,8 @@ class Browser:
 
         # Plus button to add a tab
         buttonfont = skia.Font(skia.Typeface('Arial'), 30)
-        draw_rect(canvas, 10, 10, 30, 30, fill_color=background_color, border_color=color)
+        draw_rect(canvas, 10, 10, 30, 30,
+                  fill_color=background_color, border_color=color)
         draw_text(canvas, 11, 4, "+", buttonfont, color)
 
         # Draw tabs
@@ -2299,7 +2315,8 @@ class Browser:
                 draw_line(canvas, x2, 40, WIDTH, 40, color)
 
         # Draw address bar
-        draw_rect(canvas, 40, 50, WIDTH - 10, 90, fill_color=background_color, border_color=color)
+        draw_rect(canvas, 40, 50, WIDTH - 10, 90,
+                  fill_color=background_color, border_color=color)
         if self.focus == "address bar":
             draw_text(canvas, 55, 55, self.address_bar, buttonfont, color)
             w = buttonfont.measureText(self.address_bar)
@@ -2309,9 +2326,11 @@ class Browser:
                 draw_text(canvas, 55, 55, self.url, buttonfont, color)
 
         # Draw back button
-        draw_rect(canvas, 10, 50, 35, 90, fill_color=background_color, border_color=color)
+        draw_rect(canvas, 10, 50, 35, 90,
+                  fill_color=background_color, border_color=color)
         path = skia.Path().moveTo(15, 70).lineTo(30, 55).lineTo(30, 85)
-        paint = skia.Paint(Color=parse_color(color), Style=skia.Paint.kFill_Style)
+        paint = skia.Paint(Color=parse_color(
+            color), Style=skia.Paint.kFill_Style)
         canvas.drawPath(path, paint)
 
     def composite(self):
@@ -2591,7 +2610,8 @@ class Browser:
         self.needs_draw = True
 
     def update_accessibility(self):
-        if not self.accessibility_tree: return
+        if not self.accessibility_tree:
+            return
 
         if not self.has_spoken_document:
             self.speak_document()
@@ -2612,7 +2632,7 @@ class Browser:
                 node for node in tree_to_list(
                     self.accessibility_tree, [])
                 if node.node == old_node.node
-                   and node.role == "alert"
+                and node.role == "alert"
             ]
             if new_nodes:
                 new_spoken_alerts.append(new_nodes[0])
@@ -2622,7 +2642,7 @@ class Browser:
                 self.tab_focus != self.last_tab_focus:
             nodes = [node for node in tree_to_list(
                 self.accessibility_tree, [])
-                     if node.node == self.tab_focus]
+                if node.node == self.tab_focus]
             if nodes:
                 self.focus_a11y_node = nodes[0]
                 self.speak_node(

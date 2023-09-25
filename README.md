@@ -21,3 +21,9 @@ Install packages:
 ```bash
 pip install -r requirements.txt
 ```
+
+Run browser:
+
+````bash
+python browser.py http://browser.engineering/```
+````
