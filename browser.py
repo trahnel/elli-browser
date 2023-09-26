@@ -16,79 +16,111 @@ import gtts
 import playsound
 
 
-def request(url, top_level_url, payload=None):
-    scheme, url = url.split("://", 1)
-    assert scheme in ["http", "https"], f"Unknown scheme {scheme}"
+class URL:
+    def __init__(self, url) -> None:
+        self.scheme, url = url.split('://', 1)
+        assert self.scheme in [
+            "http", "https"], f"Unknown scheme {self.scheme}"
 
-    port = 80 if scheme == "http" else 443
+        if "/" not in url:
+            url = url + "/"
+        self.host, url = url.split("/", 1)
+        self.path = "/" + url
 
-    host, path = url.split('/', 1)
-    path = '/' + path
+        if self.scheme == "http":
+            self.port = 80
+        elif self.scheme == "https":
+            self.port = 443
 
-    if ":" in host:
-        host, port = host.split(":", 1)
-        port = int(port)
+        if ":" in self.host:
+            self.host, port = self.host.split(":", 1)
+            self.port = int(port)
 
-    s = socket.socket(
-        family=socket.AF_INET,
-        type=socket.SOCK_STREAM,
-        proto=socket.IPPROTO_TCP
-    )
-    if scheme == "https":
-        ctx = ssl.create_default_context()
-        s = ctx.wrap_socket(s, server_hostname=host)
+    def resolve(self, url):
+        if "://" in url:
+            return URL(url)
+        if not url.startswith("/"):
+            dir, _ = self.path.rsplit("/", 1)
+            while url.startswith("../"):
+                _, url = url.split("/", 1)
+                if "/" in dir:
+                    dir, _ = dir.rsplit("/", 1)
+            url = dir + "/" + url
+        return URL(self.scheme + "://" + self.host +
+                   ":" + str(self.port) + url)
 
-    method = "POST" if payload else "GET"
-    body = f'{method} {path} HTTP/1.0\r\nHost: {host}\r\n'
-    if payload:
-        length = len(payload.encode("utf8"))
-        body += f"Content-Length: {length}\r\n"
-    if host in COOKIE_JAR:
-        cookie, params = COOKIE_JAR[host]
-        allow_cookie = True
+    def request(self, top_level_url, payload=None):
+        s = socket.socket(
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP
+        )
+        if self.scheme == "https":
+            ctx = ssl.create_default_context()
+            s = ctx.wrap_socket(s, server_hostname=self.host)
 
-        if top_level_url and params.get("samesite", "none") == "lax":
-            _, _, top_level_host, _ = top_level_url.split("/", 3)
-            top_level_host, _ = top_level_host.split(":", 1)
-            allow_cookie = (host == top_level_host or method == "GET")
-        if allow_cookie:
-            body += f'Cookie: {cookie}\r\n'
+        method = "POST" if payload else "GET"
+        body = f'{method} {self.path} HTTP/1.0\r\nHost: {self.host}\r\n'
+        if payload:
+            length = len(payload.encode("utf8"))
+            body += f"Content-Length: {length}\r\n"
+        if self.host in COOKIE_JAR:
+            cookie, params = COOKIE_JAR[self.host]
+            allow_cookie = True
 
-    body += "\r\n" + (payload or "")
+            if top_level_url and params.get("samesite", "none") == "lax":
+                _, _, top_level_host, _ = top_level_url.split("/", 3)
+                top_level_host, _ = top_level_host.split(":", 1)
+                allow_cookie = (self.host == top_level_host or method == "GET")
+            if allow_cookie:
+                body += f'Cookie: {cookie}\r\n'
 
-    s.connect((host, port))
-    s.send(body.encode())
+        body += "\r\n" + (payload or "")
 
-    response = s.makefile("r", encoding="utf8", newline="\r\n")
+        s.connect((self.host, self.port))
+        s.send(body.encode())
 
-    statusline = response.readline()
+        response = s.makefile("r", encoding="utf8", newline="\r\n")
 
-    version, status, explanation = statusline.split(" ", 2)
-    assert status == "200", f"{status}: {explanation}"
+        statusline = response.readline()
 
-    headers = {}
-    while True:
-        line = response.readline()
-        if line == "\r\n":
-            break
-        header, value = line.split(":", 1)
-        headers[header.lower()] = value.strip()
+        version, status, explanation = statusline.split(" ", 2)
+        assert status == "200", f"{status}: {explanation}"
 
-    if 'set-cookie' in headers:
-        params = {}
-        if ';' in headers['set-cookie']:
-            cookie, rest = headers["set-cookie"].split(';', 1)
-            for param_pair in rest.split(';'):
-                name, value = param_pair.strip().split("=", 1)
-                params[name.lower()] = value.lower()
-        else:
-            cookie = headers["set-cookie"]
-        COOKIE_JAR[host] = (cookie, params)
+        headers = {}
+        while True:
+            line = response.readline()
+            if line == "\r\n":
+                break
+            header, value = line.split(":", 1)
+            headers[header.lower()] = value.strip()
 
-    body = response.read()
-    s.close()
+        assert "transfer-encoding" not in headers
+        assert "content-encoding" not in headers
 
-    return headers, body
+        if 'set-cookie' in headers:
+            params = {}
+            if ';' in headers['set-cookie']:
+                cookie, rest = headers["set-cookie"].split(';', 1)
+                for param_pair in rest.split(';'):
+                    name, value = param_pair.strip().split("=", 1)
+                    params[name.lower()] = value.lower()
+            else:
+                cookie = headers["set-cookie"]
+            COOKIE_JAR[self.host] = (cookie, params)
+
+        body = response.read()
+        s.close()
+
+        return headers, body
+
+    def __str__(self):
+        port_part = ":" + str(self.port)
+        if self.scheme == "https" and self.port == 443:
+            port_part = ""
+        if self.scheme == "http" and self.port == 80:
+            port_part = ""
+        return self.scheme + "://" + self.host + port_part + self.path
 
 
 WIDTH, HEIGHT = 800, 600
@@ -1251,23 +1283,6 @@ class CompositedLayer:
                       irect.height() - 1, border_color="red")
 
 
-def resolve_url(url, current):
-    if "://" in url:
-        return url
-    elif url.startswith("/"):
-        scheme, hostpath = current.split("://", 1)
-        host, oldpath = hostpath.split("/", 1)
-        return scheme + "://" + host + url
-    else:
-        dir, _ = current.rsplit("/", 1)
-        while url.startswith("../"):
-            url = url[3:]
-            if dir.count("/") == 2:
-                continue
-            dir, _ = dir.rsplit("/", 1)
-        return dir + "/" + url
-
-
 def tree_to_list(tree, list):
     list.append(tree)
     for child in tree.children:
@@ -1531,7 +1546,7 @@ class JSContext:
 
     def XMLHttpRequest_send(self, method, url, body, isasync, handle):
         # Resolve URL
-        full_url = resolve_url(url, self.tab.url)
+        full_url = self.tab.url.resolve(url)
 
         # Security checks
         if not self.tab.allowed_request(full_url):
@@ -1541,7 +1556,7 @@ class JSContext:
 
         # Make request and enqueue a task for running callbacks
         def run_load():
-            headers, response = request(full_url, self.tab.url, payload=body)
+            headers, response = full_url.request(self.tab.url, payload=body)
             task = Task(self.dispatch_xhr_onload, response, handle)
             self.tab.task_runner.schedule_task(task)
             if not isasync:
@@ -1764,9 +1779,10 @@ class Tab:
         self.scroll_changed_in_tab = True
 
         # Request
-        headers, body = request(url, self.url, body)
+        headers, body = url.request(self.url, body)
 
         self.history.append(url)
+        print("tab url", url)
         self.url = url
 
         self.allowed_origins = None
@@ -1791,12 +1807,12 @@ class Tab:
                  and "href" in node.attributes
                  and node.attributes.get("rel") == "stylesheet"]
         for link in links:
-            style_url = resolve_url(link, url)
+            style_url = url.resolve(link)
             if not self.allowed_request(style_url):
                 print("Blocked style", link, "due to CSP")
                 continue
             try:
-                header, body = request(style_url, url)
+                header, body = url.request(style_url)
             except:
                 continue
             self.rules.extend(CSSParser(body).parse())
@@ -1809,12 +1825,13 @@ class Tab:
 
         self.js = JSContext(self)
         for script in scripts:
-            script_url = resolve_url(script, url)
+            script_url = url.resolve(script)
             if not self.allowed_request(script_url):
                 print("Blocked script", script, "due to CSP")
                 continue
 
-            header, body = request(script_url, url)
+            print("script", script, script_url)
+            header, body = script_url.request(url)
             task = Task(self.js.run, script_url, body)
             self.task_runner.schedule_task(task)
 
@@ -1987,7 +2004,7 @@ class Tab:
             body += "&" + name + "=" + value
         body = body[1:]
 
-        url = resolve_url(elt.attributes["action"], self.url)
+        url = self.url.resolve(elt.attributes["action"])
         self.load(url, body)
 
     def go_back(self):
@@ -2046,7 +2063,7 @@ class Tab:
         if elt.tag == "input":
             elt.attributes["value"] = ""
         elif elt.tag == "a" and "href" in elt.attributes:
-            url = resolve_url(elt.attributes["href"], self.url)
+            url = self.url.resolve(elt.attributes["href"])
             self.load(url)
         elif elt.tag == "button":
             while elt:
@@ -2322,8 +2339,8 @@ class Browser:
             w = buttonfont.measureText(self.address_bar)
             draw_line(canvas, 55 + w, 55, 55 + w, 85, color)
         else:
-            if self.url:
-                draw_text(canvas, 55, 55, self.url, buttonfont, color)
+            url = str(self.tabs[self.active_tab].url)
+            draw_text(canvas, 55, 55, url, buttonfont, color)
 
         # Draw back button
         draw_rect(canvas, 10, 50, 35, 90,
@@ -2511,7 +2528,7 @@ class Browser:
     def handle_enter(self):
         self.lock.acquire(blocking=True)
         if self.focus == "address bar":
-            self.schedule_load_tab(self.address_bar)
+            self.schedule_load_tab(URL(self.address_bar))
             self.focus = None
             self.set_needs_raster()
         elif self.focus == "content":
@@ -2545,7 +2562,7 @@ class Browser:
             if 40 <= e.x < 40 + 80 * len(self.tabs) and 0 <= e.y < 40:  # Tabs
                 self.active_tab = int((e.x - 40) / 80)
             elif 10 <= e.x < 30 and 10 <= e.y < 30:  # + button, new tab
-                self.load_internal("https://browser.engineering/")
+                self.load_internal(URL("https://browser.engineering/"))
             elif 10 <= e.x < 35 and 40 <= e.y < 90:  # Back button
                 self.tabs[self.active_tab].go_back()
             elif 50 <= e.x < WIDTH - 10 and 40 <= e.y < 90:
@@ -2686,7 +2703,8 @@ if __name__ == "__main__":
 
     sdl2.SDL_Init(sdl2.SDL_INIT_EVENTS)
     browser = Browser()
-    browser.load(sys.argv[1])
+    print(sys.argv)
+    browser.load(URL(sys.argv[1]))
 
     ctrl_down = False
     cmd_down = False
