@@ -452,24 +452,6 @@ INHERITED_PROPERTIES = {
 }
 
 
-def compute_style(node, property, value):
-    if property == 'font-size':
-        if value.endswith("px"):
-            return value
-        elif value.endswith("%"):
-            if node.parent:
-                parent_font_size = node.parent.style["font-size"]
-            else:
-                parent_font_size = INHERITED_PROPERTIES["font-size"]
-            node_pct = float(value[:-1]) / 100
-            parent_px = float(parent_font_size[:-2])
-            return str(node_pct * parent_px) + "px"
-        else:
-            return None
-    else:
-        return value
-
-
 class NumericAnimation:
     def __init__(self, old_value, new_value, num_frames):
         self.old_value = float(old_value)
@@ -517,19 +499,26 @@ ANIMATED_PROPERTIES = {
 }
 
 
+def get_root_node(node):
+    if node.parent:
+        return get_root_node(node.parent)
+    else:
+        return node
+
+
 def style(node, rules, tab):
     old_style = node.style
 
     node.style = {}
 
-    # Inherited styles
+    # Inherited styles (browser defaults)
     for prop, default_value in INHERITED_PROPERTIES.items():
         if node.parent:
             node.style[prop] = node.parent.style[prop]
         else:
             node.style[prop] = default_value
 
-    # Selector styles
+    # Selector styles (eg. .css files)
     for media, selector, body in rules:
         if media:
             if (media == "dark") != tab.dark_mode:
@@ -537,18 +526,27 @@ def style(node, rules, tab):
         if not selector.matches(node):
             continue
         for prop, value in body.items():
-            computed_value = compute_style(node, prop, value)
-            if not computed_value:
-                continue
-            node.style[prop] = computed_value
+            node.style[prop] = value
 
-    # Inline styles
+    # Inline styles (element style attributes)
     if isinstance(node, Element) and "style" in node.attributes:
         pairs = CSSParser(node.attributes["style"]).body()
         for prop, value in pairs.items():
             node.style[prop] = value
-    for child in node.children:
-        style(child, rules, tab)
+
+    if node.style["font-size"].endswith("%"):
+        if node.parent:
+            parent_font_size = node.parent.style["font-size"]
+        else:
+            parent_font_size = INHERITED_PROPERTIES["font-size"]
+        node_pct = float(node.style["font-size"][:-1]) / 100
+        parent_px = float(parent_font_size[:-2])
+        node.style["font-size"] = str(node_pct * parent_px) + "px"
+    elif node.style["font-size"].endswith("rem"):
+        root_node = get_root_node(node)
+        root_px = float(root_node.style["font-size"][:-2])
+        node_rem = float(node.style["font-size"][:-3])
+        node.style["font-size"] = str(root_px * node_rem) + "px"
 
     if old_style:
         transitions = diff_styles(old_style, node.style)
@@ -559,6 +557,9 @@ def style(node, rules, tab):
                 animation = AnimationClass(old_value, new_value, num_frames)
                 node.animations[property] = animation
                 node.style[property] = animation.animate()
+
+    for child in node.children:
+        style(child, rules, tab)
 
 
 def parse_transition(value):
