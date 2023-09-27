@@ -15,6 +15,8 @@ import os
 import gtts
 import playsound
 
+import html
+
 
 class URL:
     def __init__(self, url) -> None:
@@ -730,7 +732,7 @@ class InputLayout(EmbedLayout):
     def __init__(self, node, parent, previous):
         super().__init__(node, parent, previous)
 
-    def layout(self, zoom):
+    def layout(self):
         super().layout()
 
         self.width = device_px(INPUT_WIDTH_PX, self.zoom)
@@ -763,8 +765,8 @@ class InputLayout(EmbedLayout):
         display_list.extend(cmds)
 
     def __repr__(self):
-        return "InputLayout(x={}, y={}, width={}, height={}, font={}, word={}".format(
-            self.x, self.y, self.width, self.height, self.font, self.word)
+        return "InputLayout(x={}, y={}, width={}, height={})".format(
+            self.x, self.y, self.width, self.height)
 
 
 class BlockLayout:
@@ -1854,7 +1856,7 @@ class Tab:
 
         # Request
         headers, body = url.request(self.url, body)
-        body = body.decode('utf8')
+        body = html.unescape(body.decode('utf8'))
 
         self.history.append(url)
         self.url = url
