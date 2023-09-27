@@ -103,10 +103,11 @@ class URL:
             if ';' in headers['set-cookie']:
                 cookie, rest = headers["set-cookie"].split(';', 1)
                 for param_pair in rest.split(';'):
-                    name, value = param_pair.strip().split("=", 1)
-                    params[name.lower()] = value.lower()
-            else:
-                cookie = headers["set-cookie"]
+                    if "=" in param_pair:
+                        name, value = param_pair.strip().split("=", 1)
+                        params[name.lower()] = value.lower()
+                    else:
+                        params[param_pair.strip().lower()] = True
             COOKIE_JAR[self.host] = (cookie, params)
 
         body = response.read()
