@@ -609,7 +609,7 @@ def cascade_priority(rule):
 
 
 class TextLayout:
-    def __init__(self, node, word, parent, previous):
+    def __init__(self, node, parent, previous, word):
         self.node = node
         self.word = word
         self.parent = parent
@@ -799,7 +799,8 @@ class BlockLayout:
 
     def recurse(self, node):
         if isinstance(node, Text):
-            self.text(node)
+            for word in node.text.split():
+                self.word(node, word)
         else:
             if node.tag == 'br':
                 self.new_line()
@@ -810,23 +811,6 @@ class BlockLayout:
             else:
                 for child in node.children:
                     self.recurse(child)
-
-    def text(self, node):
-        weight = node.style["font-weight"]
-        style = node.style["font-style"]
-        if style == 'normal':
-            style = "roman"
-        size = device_px(float(node.style["font-size"][:-2]), self.zoom)
-        font = get_font(size, weight, style)
-        for word in node.text.split():
-            w = font.measureText(word)
-            if self.cursor_x + w > self.width - HSTEP:
-                self.new_line()
-            line = self.children[-1]
-            text = TextLayout(node, word, line, self.previous_word)
-            line.children.append(text)
-            self.previous_word = text
-            self.cursor_x += w + font.measureText(" ")
 
     def new_line(self):
         self.previous_word = None
