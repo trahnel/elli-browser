@@ -1856,8 +1856,8 @@ class Tab:
 
         # Request
         headers, body = url.request(self.url, body)
-        # body = html.unescape(body.decode('utf8'))
         body = body.decode("utf8")
+        body = html.unescape(body)
 
         self.history.append(url)
         self.url = url
