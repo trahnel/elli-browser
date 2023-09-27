@@ -1856,7 +1856,8 @@ class Tab:
 
         # Request
         headers, body = url.request(self.url, body)
-        body = html.unescape(body.decode('utf8'))
+        # body = html.unescape(body.decode('utf8'))
+        body = body.decode("utf8")
 
         self.history.append(url)
         self.url = url
@@ -2021,7 +2022,7 @@ class Tab:
             self.needs_accessibility = True
             self.needs_paint = True
             self.needs_layout = False
-            print_tree(self.document)
+            # print_tree(self.document)
 
         if self.needs_accessibility:
             self.accessibility_tree = AccessibilityNode(self.nodes)
