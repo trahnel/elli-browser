@@ -1919,14 +1919,15 @@ class Tab:
         for img in images:
             try:
                 src = img.attributes.get("src", "")
-                image_url = url.resolve(src)
-                assert self.allowed_request(
-                    image_url), "Blocked load of " + image_url + "due to CSP"
-                header, body = image_url.request(url)
+                if not src.startswith('data:'):
+                    image_url = url.resolve(src)
+                    assert self.allowed_request(
+                        image_url), "Blocked load of " + image_url + "due to CSP"
+                    header, body = image_url.request(url)
 
-                img.encoded_data = body
-                data = skia.Data.MakeWithoutCopy(body)
-                img.image = skia.Image.MakeFromEncoded(data)
+                    img.encoded_data = body
+                    data = skia.Data.MakeWithoutCopy(body)
+                    img.image = skia.Image.MakeFromEncoded(data)
             except Exception as e:
                 print("Exception loading image: url=" +
                       str(image_url) + " exception=" + str(e))
