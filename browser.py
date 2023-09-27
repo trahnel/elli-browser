@@ -752,10 +752,12 @@ class InputLayout(EmbedLayout):
         if self.node.tag == "input":
             text = self.node.attributes.get("value", "")
         elif self.node.tag == "button":
-            text = self.node.children[0].text
-
-        color = self.node.style["color"]
-        cmds.append(DrawText(self.x, self.y, text, self.font, color))
+            try:
+                text = self.node.children[0].text
+                color = self.node.style["color"]
+                cmds.append(DrawText(self.x, self.y, text, self.font, color))
+            except Exception as e:
+                print("Exception painting button: exception=" + str(e))
 
         if self.node.is_focused and self.node.tag == "input":
             cx = rect.left() + self.font.measureText(text)
@@ -1905,18 +1907,18 @@ class Tab:
         for img in images:
             try:
                 src = img.attributes.get("src", "")
-                if not src.startswith('data:'):
-                    image_url = url.resolve(src)
-                    assert self.allowed_request(
-                        image_url), "Blocked load of " + image_url + "due to CSP"
-                    header, body = image_url.request(url)
+                image_url = url.resolve(src)
+                assert self.allowed_request(
+                    image_url), "Blocked load of " + image_url + "due to CSP"
+                header, body = image_url.request(url)
 
-                    img.encoded_data = body
-                    data = skia.Data.MakeWithoutCopy(body)
-                    img.image = skia.Image.MakeFromEncoded(data)
+                img.encoded_data = body
+                data = skia.Data.MakeWithoutCopy(body)
+                img.image = skia.Image.MakeFromEncoded(data)
             except Exception as e:
+                url = image_url if image_url else src
                 print("Exception loading image: url=" +
-                      str(image_url) + " exception=" + str(e))
+                      str(url) + " exception=" + str(e))
                 img.image = BROKEN_IMAGE
 
         self.set_needs_render()
